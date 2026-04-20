@@ -73,6 +73,13 @@ def planner_node(state: AgentState) -> dict:
 
     messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)]
 
+    # Retrieve conversation context from AgentCore summary memory
+    from src.agent.core.summary_memory import retrieve_summary
+
+    memory_context = retrieve_summary("agentic-system", state.get("_thread_id", "default"), state["query"])
+    if memory_context:
+        messages.append(SystemMessage(content=memory_context))
+
     # If we have previous observations, this is a re-plan
     if state["observations"]:
         obs_text = "\n".join(

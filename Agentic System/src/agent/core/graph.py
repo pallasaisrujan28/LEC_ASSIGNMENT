@@ -83,6 +83,7 @@ def run_agent(query: str, budget_usd: float = 20.0, thread_id: str = "default") 
         "budget": BudgetInfo(max_budget_usd=budget_usd),
         "final_answer": None,
         "error": None,
+        "_thread_id": thread_id,
     }
 
     config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
@@ -91,6 +92,16 @@ def run_agent(query: str, budget_usd: float = 20.0, thread_id: str = "default") 
         result = graph.invoke(initial_state, config=config)
     except Exception as e:
         result = {**initial_state, "error": str(e)}
+
+    # Save exchange to AgentCore summary memory
+    final_answer = result.get("final_answer", "")
+    if final_answer and not result.get("error"):
+        try:
+            from src.agent.core.summary_memory import save_exchange
+
+            save_exchange("agentic-system", thread_id, query, final_answer)
+        except Exception:
+            pass  # Don't fail the response if memory save fails
 
     # Build response
     plan_output = None
