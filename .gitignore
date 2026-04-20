@@ -13,3 +13,5 @@ build/
 *.sqlite
 .DS_Store
 .deepeval/
+.next/
+node_modules/

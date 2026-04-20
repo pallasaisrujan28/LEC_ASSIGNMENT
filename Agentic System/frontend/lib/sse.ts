@@ -5,7 +5,7 @@ export async function streamAgent(
   onEvent: (eventType: string, data: unknown) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const response = await fetch('/agent/stream', {
+  const response = await fetch('http://localhost:8000/agent/stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

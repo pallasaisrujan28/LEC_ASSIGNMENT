@@ -24,8 +24,8 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'AgentCore — Plan-and-Execute AI',
-  description: 'Production-grade AI agent with real-time reasoning visibility',
+  title: 'Agentic System',
+  description: 'Production-grade Plan-and-Execute AI agent',
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

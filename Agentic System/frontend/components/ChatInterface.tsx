@@ -3,21 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { generateId } from '@/lib/utils';
-import { runDemoStream } from '@/lib/demo';
 import { streamAgent } from '@/lib/sse';
 import { AgentEvent, AgentTurn } from '@/types/agent';
 import Sidebar from './Sidebar';
-import MessageInput from './MessageInput';
 import TurnView from './TurnView';
-import EmptyState from './EmptyState';
-import { Zap } from 'lucide-react';
+import { Send } from 'lucide-react';
 
 export default function ChatInterface() {
   const [turns, setTurns] = useState<AgentTurn[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [demoMode, setDemoMode] = useState(true);
   const [threadId, setThreadId] = useState(() => 'thread_' + generateId());
-  const [budgetLimit, setBudgetLimit] = useState(20);
+  const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -44,19 +40,10 @@ export default function ChatInterface() {
   const sendMessage = useCallback(
     async (query: string) => {
       if (!query.trim() || isStreaming) return;
-
       const turnId = generateId();
-      const newTurn: AgentTurn = {
-        id: turnId,
-        query,
-        events: [],
-        stepStatuses: {},
-        isStreaming: true,
-      };
-
-      setTurns((prev) => [...prev, newTurn]);
+      setTurns((prev) => [...prev, { id: turnId, query, events: [], stepStatuses: {}, isStreaming: true }]);
       setIsStreaming(true);
-
+      setInput('');
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -74,129 +61,80 @@ export default function ChatInterface() {
           );
         }
       };
-
       try {
-        if (demoMode) {
-          await runDemoStream(query, onEvent, controller.signal);
-        } else {
-          await streamAgent(query, budgetLimit, threadId, onEvent, controller.signal);
-        }
+        await streamAgent(query, 20, threadId, onEvent, controller.signal);
       } catch (err: unknown) {
         if ((err as Error)?.name !== 'AbortError') {
-          appendEvent(turnId, {
-            type: 'error',
-            data: { message: (err as Error)?.message ?? 'Unknown error' },
-          });
+          appendEvent(turnId, { type: 'error', data: { message: (err as Error)?.message ?? 'Unknown error' } });
         }
       } finally {
-        setTurns((prev) =>
-          prev.map((t) => (t.id === turnId ? { ...t, isStreaming: false } : t))
-        );
+        setTurns((prev) => prev.map((t) => (t.id === turnId ? { ...t, isStreaming: false } : t)));
         setIsStreaming(false);
         abortRef.current = null;
       }
     },
-    [isStreaming, demoMode, budgetLimit, threadId, appendEvent]
+    [isStreaming, threadId, appendEvent]
   );
 
-  const stopStreaming = () => {
-    abortRef.current?.abort();
-  };
+  const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); sendMessage(input); };
+  const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } };
+  const newConversation = () => { abortRef.current?.abort(); setTurns([]); setIsStreaming(false); setThreadId('thread_' + generateId()); };
 
-  const newConversation = () => {
-    abortRef.current?.abort();
-    setTurns([]);
-    setIsStreaming(false);
-    setThreadId('thread_' + generateId());
-  };
+  const hasMessages = turns.length > 0;
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[#07070f]">
-      <Sidebar
-        threadId={threadId}
-        turnCount={turns.length}
-        onNewConversation={newConversation}
-        demoMode={demoMode}
-        onToggleDemo={() => setDemoMode((d) => !d)}
-      />
+    <div className="flex h-screen overflow-hidden bg-[#1a1a18]">
+      <Sidebar turnCount={turns.length} onNewConversation={newConversation} />
 
       <div className="flex flex-1 flex-col overflow-hidden">
-        {/* Top bar */}
-        <div className="flex items-center justify-between border-b border-white/[0.05] bg-[#07070f]/80 px-6 py-3 backdrop-blur-xl">
-          <div className="flex items-center gap-2.5">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
-            </span>
-            <span className="font-mono text-xs tracking-widest text-[#5a6070] uppercase">
-              Plan-and-Execute · LangGraph + Bedrock
-            </span>
+        {!hasMessages ? (
+          <div className="flex flex-1 flex-col items-center justify-center px-6">
+            <motion.h1 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="font-syne text-3xl font-bold text-[#e8e4dc] mb-8">
+              Hello, LEC Team
+            </motion.h1>
+            <motion.form initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} onSubmit={handleSubmit} className="w-full max-w-2xl">
+              <div className="relative rounded-2xl border border-white/[0.08] bg-[#252520] shadow-lg">
+                <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="How can I help you today?" rows={2} className="w-full resize-none bg-transparent px-5 py-4 pr-14 text-[15px] text-[#e8e4dc] placeholder-[#5a5548] outline-none" />
+                <button type="submit" disabled={!input.trim() || isStreaming} className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-lg bg-amber-600 text-white transition-all hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed">
+                  <Send size={16} />
+                </button>
+              </div>
+            </motion.form>
           </div>
-          <div className="flex items-center gap-2">
-            {isStreaming && (
-              <button
-                onClick={stopStreaming}
-                className="rounded-md border border-red-500/20 bg-red-500/10 px-3 py-1 font-mono text-xs text-red-400 transition-all hover:bg-red-500/20"
-              >
-                ■ Stop
-              </button>
-            )}
-            <button
-              onClick={newConversation}
-              className="rounded-md border border-white/[0.08] bg-white/[0.03] px-3 py-1 font-mono text-xs text-[#5a6070] transition-all hover:border-white/[0.15] hover:text-[#c8cce0]"
-            >
-              New chat
-            </button>
-          </div>
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-3xl px-6 py-8">
-            <AnimatePresence mode="wait">
-              {turns.length === 0 ? (
-                <EmptyState key="empty" onPrompt={sendMessage} />
-              ) : (
-                <motion.div
-                  key="turns"
-                  className="flex flex-col gap-8"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                >
-                  {turns.map((turn) => (
-                    <TurnView key={turn.id} turn={turn} />
-                  ))}
-                  {isStreaming && (
-                    <motion.div
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      className="flex items-center gap-2 pl-1"
-                    >
-                      <div className="flex h-5 w-5 items-center justify-center rounded-md bg-gradient-to-br from-cyan-500 to-violet-500">
-                        <Zap size={10} className="text-white" />
-                      </div>
-                      <div className="flex gap-1">
-                        <span className="h-1.5 w-1.5 animate-dot-1 rounded-full bg-cyan-400" />
-                        <span className="h-1.5 w-1.5 animate-dot-2 rounded-full bg-cyan-400" />
-                        <span className="h-1.5 w-1.5 animate-dot-3 rounded-full bg-cyan-400" />
-                      </div>
-                      <span className="font-mono text-xs text-[#5a6070]">Processing…</span>
-                    </motion.div>
-                  )}
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <div ref={bottomRef} />
-          </div>
-        </div>
-
-        {/* Input */}
-        <MessageInput
-          onSend={sendMessage}
-          isStreaming={isStreaming}
-          budgetLimit={budgetLimit}
-          onBudgetChange={setBudgetLimit}
-        />
+        ) : (
+          <>
+            <div className="flex-1 overflow-y-auto">
+              <div className="mx-auto max-w-3xl px-6 py-6">
+                <AnimatePresence>
+                  <motion.div className="flex flex-col gap-6">
+                    {turns.map((turn) => (<TurnView key={turn.id} turn={turn} />))}
+                    {isStreaming && (
+                      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 pl-1">
+                        <div className="flex gap-1">
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-amber-400" style={{ animationDelay: '0ms' }} />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-amber-400" style={{ animationDelay: '150ms' }} />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-amber-400" style={{ animationDelay: '300ms' }} />
+                        </div>
+                        <span className="font-mono text-xs text-[#5a5548]">Thinking…</span>
+                      </motion.div>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+                <div ref={bottomRef} />
+              </div>
+            </div>
+            <div className="border-t border-white/[0.04] px-6 py-4">
+              <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
+                <div className="relative rounded-2xl border border-white/[0.08] bg-[#252520]">
+                  <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Ask a follow-up question..." rows={1} className="w-full resize-none bg-transparent px-5 py-3 pr-14 text-[15px] text-[#e8e4dc] placeholder-[#5a5548] outline-none" />
+                  <button type="submit" disabled={!input.trim() || isStreaming} className="absolute bottom-2 right-3 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-600 text-white transition-all hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed">
+                    <Send size={14} />
+                  </button>
+                </div>
+              </form>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

@@ -25,7 +25,7 @@ export default function TurnView({ turn }: TurnViewProps) {
         animate={{ opacity: 1, y: 0 }}
         className="flex justify-end"
       >
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-white/[0.08] bg-gradient-to-br from-[#16162a] to-[#111120] px-4 py-3 font-outfit text-sm text-[#e2e4f0] leading-relaxed shadow-lg">
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-white/[0.08] bg-[#252520] px-4 py-3 font-outfit text-sm text-[#e8e4dc] leading-relaxed shadow-lg">
           {turn.query}
         </div>
       </motion.div>
@@ -39,11 +39,9 @@ export default function TurnView({ turn }: TurnViewProps) {
       >
         {/* Agent label */}
         <div className="flex items-center gap-2">
-          <div className="flex h-5 w-5 items-center justify-center rounded-md bg-gradient-to-br from-cyan-400 to-violet-500">
-            <Zap size={10} className="text-white" />
-          </div>
-          <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-[#3d4450]">
-            AgentCore
+          <img src="/lec-logo.png" alt="LEC" className="h-5 w-5 rounded object-contain" />
+          <span className="font-mono text-[10px] uppercase tracking-[1.5px] text-[#5a5548]">
+            LEC Agent
           </span>
         </div>
 

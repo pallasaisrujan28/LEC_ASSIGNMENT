@@ -37,7 +37,7 @@ export default function PlanningBlock({ data, stepStatuses }: PlanningBlockProps
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="overflow-hidden rounded-xl border border-white/[0.06] bg-[#0c0c18]"
+      className="overflow-hidden rounded-xl border border-white/[0.06] bg-[#141210]"
     >
       {/* Header */}
       <button
@@ -88,7 +88,7 @@ export default function PlanningBlock({ data, stepStatuses }: PlanningBlockProps
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: idx * 0.07, duration: 0.25 }}
-                    className={`rounded-lg border bg-[#07070f] px-3 py-2.5 transition-colors ${STATUS_BORDER[status]}`}
+                    className={`rounded-lg border bg-[#0d0d0b] px-3 py-2.5 transition-colors ${STATUS_BORDER[status]}`}
                   >
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-[9px] text-[#2a2d3a] w-4">
