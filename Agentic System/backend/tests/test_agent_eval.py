@@ -19,7 +19,7 @@ from deepeval.models import AmazonBedrockModel
 
 from dotenv import load_dotenv
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.agent.core.graph import run_agent
