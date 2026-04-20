@@ -20,7 +20,7 @@ from langgraph_checkpoint_aws import AgentCoreMemoryStore
 def _get_store() -> AgentCoreMemoryStore:
     memory_id = os.environ.get("AGENTCORE_MEMORY_ID")
     region = os.environ.get("AWS_REGION", "us-west-2")
-    return AgentCoreMemoryStore(memory_id, region_name=region)
+    return AgentCoreMemoryStore(memory_id=memory_id, region_name=region)
 
 
 def save_exchange(actor_id: str, thread_id: str, query: str, answer: str):
@@ -51,10 +51,12 @@ def retrieve_summary(actor_id: str, thread_id: str, query: str) -> str:
 
     Uses AgentCore's semantic search over stored memories to find
     relevant context from past exchanges in this session.
-    Returns empty string if no relevant memories found.
+    The namespace follows AgentCore's SummaryMemoryStrategy pattern:
+    /strategy/{memoryStrategyId}/actor/{actorId}/session/{sessionId}/
     """
     store = _get_store()
-    namespace = ("summaries", actor_id, thread_id)
+    strategy_id = os.environ.get("AGENTCORE_SUMMARY_STRATEGY_ID", "")
+    namespace = ("strategy", strategy_id, "actor", actor_id, "session", thread_id)
 
     try:
         results = store.search(namespace, query=query, limit=3)

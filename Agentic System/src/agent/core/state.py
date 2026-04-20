@@ -57,4 +57,3 @@ class AgentState(TypedDict):
     budget: BudgetInfo
     final_answer: str | None
     error: str | None
-    _thread_id: str

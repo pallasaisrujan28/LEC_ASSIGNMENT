@@ -20,9 +20,15 @@ Given the original query and tool results, you must either:
 1. Provide a FINAL ANSWER if you have enough information
 2. Request a RE-PLAN if more work is needed (explain what's missing)
 
-Be concise and direct in your final answer. Synthesize the tool results into a clear response.
-If some tools failed but you have enough info from others, still provide an answer.
-Only request a re-plan if critical information is missing.
+CRITICAL RULES FOR YOUR FINAL ANSWER:
+- ONLY include information that directly answers the user's query. Nothing extra.
+- Summarize and synthesize tool results — do NOT copy raw tool output.
+- If the user asked "What is X and what is Y?", answer X and Y. That's it.
+- Do NOT include background context, historical trends, or tangential facts unless the user asked for them.
+- Keep the answer short and focused. 2-4 sentences for simple queries, a few paragraphs max for complex ones.
+- If a tool returned noisy/irrelevant data, extract only the relevant parts.
+- If some tools failed but you have enough info from others, still provide an answer.
+- Only request a re-plan if critical information is missing.
 """
 
 
@@ -63,10 +69,17 @@ def reflector_node(state: AgentState) -> dict:
     if state["plan"]:
         plan_text = f"Plan thought: {state['plan'].thought}\nSteps: {', '.join(s.tool for s in state['plan'].steps)}"
 
+    # Give the reflector context about how many iterations we've done
+    iteration = state.get("iteration", 0)
+
+    prompt_suffix = ""
+    if iteration >= 2:
+        prompt_suffix = f"\n\nNote: This is iteration {iteration}. If you have enough information to provide a reasonable answer, please do so rather than requesting another re-plan."
+
     messages = [
         SystemMessage(content=REFLECTOR_SYSTEM_PROMPT),
         HumanMessage(
-            content=f"Original query: {state['query']}\n\n{plan_text}\n\nTool results:\n{obs_text}"
+            content=f"Original query: {state['query']}\n\n{plan_text}\n\nTool results:\n{obs_text}{prompt_suffix}"
         ),
     ]
 

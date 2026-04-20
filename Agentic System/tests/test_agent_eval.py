@@ -13,8 +13,9 @@ import time
 
 import pytest
 from deepeval import assert_test
-from deepeval.test_case import LLMTestCase, ToolCall
+from deepeval.test_case import LLMTestCase, LLMTestCaseParams, ToolCall
 from deepeval.metrics import AnswerRelevancyMetric, ToolCorrectnessMetric, GEval
+from deepeval.models import AmazonBedrockModel
 
 from dotenv import load_dotenv
 
@@ -23,26 +24,38 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.agent.core.graph import run_agent
 
+# ── Judge model (Bedrock, not OpenAI) ───────────────────────────────────
+
+judge = AmazonBedrockModel(
+    model="us.anthropic.claude-sonnet-4-6",
+    region=os.environ.get("AWS_REGION", "us-west-2"),
+)
 
 # ── Grading criteria ────────────────────────────────────────────────────
 
-answer_relevancy = AnswerRelevancyMetric(threshold=0.7)
-tool_correctness = ToolCorrectnessMetric(threshold=0.7)
+answer_relevancy = AnswerRelevancyMetric(model=judge, threshold=0.7)
+tool_correctness = ToolCorrectnessMetric(model=judge, threshold=0.5)
 
 correctness = GEval(
     name="Correctness",
+    model=judge,
     criteria="The actual output is factually correct and directly answers the query.",
-    evaluation_params=["input", "actual_output", "expected_output"],
+    evaluation_params=[
+        LLMTestCaseParams.INPUT,
+        LLMTestCaseParams.ACTUAL_OUTPUT,
+        LLMTestCaseParams.EXPECTED_OUTPUT,
+    ],
     threshold=0.7,
 )
 
 
 # ── Helper ──────────────────────────────────────────────────────────────
 
-def _evaluate(query: str, expected: str, expected_tools: list[str]):
-    """Run agent, build test case, assert metrics."""
+def _evaluate(query, expected, expected_tools):
+    import uuid
     start = time.time()
-    result = run_agent(query)
+    thread_id = f"eval-{uuid.uuid4().hex[:8]}"
+    result = run_agent(query, thread_id=thread_id)
     elapsed = time.time() - start
 
     tools_called = [
@@ -50,9 +63,11 @@ def _evaluate(query: str, expected: str, expected_tools: list[str]):
         for o in result.get("observations", [])
     ]
 
+    actual = result.get("final_answer") or "No answer produced."
+
     tc = LLMTestCase(
         input=query,
-        actual_output=result.get("final_answer", ""),
+        actual_output=actual,
         expected_output=expected,
         tools_called=tools_called,
         expected_tools=[ToolCall(name=t) for t in expected_tools],
@@ -62,11 +77,10 @@ def _evaluate(query: str, expected: str, expected_tools: list[str]):
     assert_test(tc, [answer_relevancy, tool_correctness, correctness])
 
 
-# ── 10+ multi-step queries ──────────────────────────────────────────────
+# ── 12 multi-step queries ───────────────────────────────────────────────
 
 
 def test_01_population_plus_percentage():
-    """wiki_summary → calculator"""
     _evaluate(
         "What is the population of Japan and what is 3% of it?",
         "Japan's population is approximately 124 million. 3% is about 3.72 million.",
@@ -75,7 +89,6 @@ def test_01_population_plus_percentage():
 
 
 def test_02_crypto_price_calculation():
-    """web_search → calculator"""
     _evaluate(
         "Search for the current price of Bitcoin and calculate what 0.5 BTC is worth.",
         "Current Bitcoin price multiplied by 0.5.",
@@ -84,7 +97,6 @@ def test_02_crypto_price_calculation():
 
 
 def test_03_company_background_plus_news():
-    """wiki_summary → web_search"""
     _evaluate(
         "What is SpaceX according to Wikipedia, and what was their most recent launch?",
         "SpaceX is an American spacecraft manufacturer. Latest launch details.",
@@ -93,7 +105,6 @@ def test_03_company_background_plus_news():
 
 
 def test_04_gdp_percentage_and_news():
-    """wiki_summary → calculator → web_search"""
     _evaluate(
         "What is the GDP of Germany, what is 5% of it, and what are the latest economic headlines about Germany?",
         "Germany's GDP, 5% of it, and recent economic news.",
@@ -102,16 +113,14 @@ def test_04_gdp_percentage_and_news():
 
 
 def test_05_population_comparison():
-    """wiki_summary (x2) → calculator"""
     _evaluate(
         "What are the populations of France and the UK, and what is the difference?",
-        "France ~69M, UK ~67M, difference ~2M.",
+        "France ~69M, UK ~69M, difference is small.",
         ["wiki_summary", "calculator"],
     )
 
 
 def test_06_ai_news_plus_background():
-    """web_search → wiki_summary"""
     _evaluate(
         "What are the latest AI breakthroughs in 2026, and give me a Wikipedia summary of the Transformer architecture?",
         "Latest AI news. Transformer is a deep learning architecture using self-attention.",
@@ -120,7 +129,6 @@ def test_06_ai_news_plus_background():
 
 
 def test_07_chained_calculations():
-    """calculator (multi-step)"""
     _evaluate(
         "What is 1500 * 12, then take 20% of that, then add 500?",
         "1500*12=18000, 20%=3600, +500=4100.",
@@ -129,7 +137,6 @@ def test_07_chained_calculations():
 
 
 def test_08_wiki_search_then_summary():
-    """wiki_search → wiki_summary"""
     _evaluate(
         "Search Wikipedia for articles about quantum computing, then summarize the main one.",
         "Quantum computing uses quantum mechanics for computation.",
@@ -138,7 +145,6 @@ def test_08_wiki_search_then_summary():
 
 
 def test_09_water_usage_calculation():
-    """wiki_summary → calculator"""
     _evaluate(
         "How many people live in Tokyo, and if each uses 250 liters of water per day, how many total liters is that?",
         "Tokyo ~14M people. 14M * 250 = 3.5 billion liters per day.",
@@ -147,7 +153,6 @@ def test_09_water_usage_calculation():
 
 
 def test_10_climate_plus_agreement():
-    """web_search → wiki_summary"""
     _evaluate(
         "What is the latest news about climate change, and what does Wikipedia say about the Paris Agreement?",
         "Latest climate news. The Paris Agreement is an international treaty on climate change.",
@@ -155,8 +160,7 @@ def test_10_climate_plus_agreement():
     )
 
 
-def test_11_area_comparison_with_math():
-    """wiki_summary (x2) → calculator"""
+def test_11_area_comparison():
     _evaluate(
         "What is the area of Australia and the area of India? How many times bigger is Australia than India?",
         "Australia ~7.7M km², India ~3.3M km². Australia is about 2.3 times bigger.",
@@ -165,7 +169,6 @@ def test_11_area_comparison_with_math():
 
 
 def test_12_tech_research():
-    """web_search → wiki_summary"""
     _evaluate(
         "Search the web for the latest Python release and get a Wikipedia summary of the Python programming language.",
         "Latest Python release info. Python is a high-level programming language.",

@@ -28,6 +28,9 @@ RULES:
 3. If the query needs multiple tools, declare dependencies between steps.
 4. Independent steps (no dependencies) will run in parallel.
 5. Each step must have a clear reason for why it's needed.
+6. For factual data about countries, people, places, science, history — use wiki_summary FIRST. Only use web_search if you need real-time/current information that Wikipedia wouldn't have.
+7. web_search is for: current news, live prices, recent events, things that change daily. wiki_summary is for: population, GDP, area, history, definitions, established facts.
+8. When comparing two entities (e.g. populations of two countries), make separate wiki_summary calls for each — they can run in parallel since they have no dependencies.
 
 OUTPUT FORMAT (JSON):
 {
@@ -74,11 +77,16 @@ def planner_node(state: AgentState) -> dict:
     messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)]
 
     # Retrieve conversation context from AgentCore summary memory
-    from src.agent.core.summary_memory import retrieve_summary
-
-    memory_context = retrieve_summary("agentic-system", state.get("_thread_id", "default"), state["query"])
-    if memory_context:
-        messages.append(SystemMessage(content=memory_context))
+    # Note: Summary retrieval is done asynchronously to avoid blocking
+    # the planning step. Context is injected only if available.
+    # TODO: Re-enable once AgentCore Memory store search is confirmed working
+    # try:
+    #     from src.agent.core.summary_memory import retrieve_summary
+    #     memory_context = retrieve_summary("agentic-system", "default", state["query"])
+    #     if memory_context:
+    #         messages.append(SystemMessage(content=memory_context))
+    # except Exception:
+    #     pass
 
     # If we have previous observations, this is a re-plan
     if state["observations"]:

@@ -27,6 +27,7 @@ dependencies = [
     "python-dotenv",
     "httpx",
     "pyyaml",
+    "aiobotocore>=3.4.0",
 ]
 
 [project.optional-dependencies]
