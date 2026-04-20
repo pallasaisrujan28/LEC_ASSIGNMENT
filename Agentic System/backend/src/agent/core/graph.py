@@ -10,8 +10,10 @@ Guards:
 
 from langgraph.graph import StateGraph, END
 
+from langchain_core.messages import HumanMessage, AIMessage
+
 from src.agent.core.state import AgentState, BudgetInfo
-from src.agent.core.memory import get_checkpointer
+from src.agent.core.memory import get_checkpointer, maybe_summarize
 from src.agent.nodes.planner import planner_node
 from src.agent.nodes.executor import executor_node
 from src.agent.nodes.reflector import reflector_node
@@ -76,6 +78,7 @@ def run_agent(query: str, budget_usd: float = 20.0, thread_id: str = "default") 
 
     initial_state: AgentState = {
         "query": query,
+        "messages": [HumanMessage(content=query)],
         "plan": None,
         "observations": [],
         "reflections": [],
@@ -88,16 +91,42 @@ def run_agent(query: str, budget_usd: float = 20.0, thread_id: str = "default") 
     config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
 
     try:
-        result = graph.invoke(initial_state, config=config)
+        # First, check if there's existing state (previous conversation)
+        existing = graph.get_state(config)
+        if existing and existing.values and existing.values.get("messages"):
+            # Thread has history — update with new human message and reset per-turn fields
+            graph.update_state(config, {
+                "query": query,
+                "messages": [HumanMessage(content=query)],
+                "plan": None,
+                "observations": [],
+                "reflections": [],
+                "iteration": 0,
+                "budget": BudgetInfo(max_budget_usd=budget_usd),
+                "final_answer": None,
+                "error": None,
+            })
+            result = graph.invoke(None, config=config)
+        else:
+            # Fresh thread — use initial state
+            result = graph.invoke(initial_state, config=config)
     except Exception as e:
         result = {**initial_state, "error": str(e)}
 
-    # Save exchange to AgentCore summary memory
-    # TODO: Re-enable once AgentCore Memory store is confirmed working
-    # final_answer = result.get("final_answer", "")
-    # if final_answer and not result.get("error"):
-    #     try:
-    #         from src.agent.core.summary_memory import save_exchange
+    # Save the AI response and maybe summarize old messages
+    final_answer = result.get("final_answer", "")
+    if final_answer and not result.get("error"):
+        try:
+            # Add AI message
+            graph.update_state(config, {"messages": [AIMessage(content=final_answer)]})
+            # Summarize if messages are getting long
+            current_state = graph.get_state(config)
+            if current_state and current_state.values.get("messages"):
+                summarized = maybe_summarize(current_state.values["messages"])
+                if len(summarized) != len(current_state.values["messages"]):
+                    graph.update_state(config, {"messages": summarized})
+        except Exception:
+            pass
     #         save_exchange("agentic-system", thread_id, query, final_answer)
     #     except Exception:
     #         pass

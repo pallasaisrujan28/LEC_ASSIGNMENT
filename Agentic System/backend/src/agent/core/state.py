@@ -1,7 +1,9 @@
 """Agent state schema for LangGraph."""
 
-from typing import Any
+from typing import Annotated, Any
 
+from langchain_core.messages import AnyMessage
+from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
 
@@ -50,6 +52,7 @@ class AgentState(TypedDict):
     """LangGraph state for the Plan-and-Execute agent."""
 
     query: str
+    messages: Annotated[list[AnyMessage], add_messages]
     plan: Plan | None
     observations: list[Observation]
     reflections: list[str]

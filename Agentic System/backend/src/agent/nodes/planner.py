@@ -76,17 +76,14 @@ def planner_node(state: AgentState) -> dict:
 
     messages = [SystemMessage(content=PLANNER_SYSTEM_PROMPT)]
 
-    # Retrieve conversation context from AgentCore summary memory
-    # Note: Summary retrieval is done asynchronously to avoid blocking
-    # the planning step. Context is injected only if available.
-    # TODO: Re-enable once AgentCore Memory store search is confirmed working
-    # try:
-    #     from src.agent.core.summary_memory import retrieve_summary
-    #     memory_context = retrieve_summary("agentic-system", "default", state["query"])
-    #     if memory_context:
-    #         messages.append(SystemMessage(content=memory_context))
-    # except Exception:
-    #     pass
+    # Include conversation history from previous turns
+    from src.agent.core.memory import get_conversation_context
+
+    history = get_conversation_context(state.get("messages", []))
+    if history:
+        messages.append(SystemMessage(
+            content=f"CONVERSATION HISTORY:\n{history}\n\nUse this context to understand references like 'it', 'that', 'earlier', etc."
+        ))
 
     # If we have previous observations, this is a re-plan
     if state["observations"]:

@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from src.agent.core.graph import run_agent, build_graph
 from src.agent.core.state import AgentState, BudgetInfo
+from langchain_core.messages import HumanMessage, AIMessage
 
 app = FastAPI(
     title="Production Agentic System",
@@ -93,6 +94,7 @@ def agent_stream(request: QueryRequest):
             graph = build_graph()
             initial_state: AgentState = {
                 "query": request.query,
+                "messages": [HumanMessage(content=request.query)],
                 "plan": None,
                 "observations": [],
                 "reflections": [],
@@ -103,6 +105,7 @@ def agent_stream(request: QueryRequest):
             }
             config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
 
+            last_answer = None
             for event in graph.stream(initial_state, config=config, stream_mode="updates"):
                 for node_name, state_update in event.items():
                     if node_name == "planner" and state_update.get("plan"):
@@ -134,6 +137,7 @@ def agent_stream(request: QueryRequest):
 
                     elif node_name == "reflector":
                         if state_update.get("final_answer"):
+                            last_answer = state_update["final_answer"]
                             yield _sse_event("answer", {
                                 "final_answer": state_update["final_answer"],
                             })
@@ -147,6 +151,13 @@ def agent_stream(request: QueryRequest):
                         budget = state_update.get("budget")
                         if budget and hasattr(budget, "model_dump"):
                             yield _sse_event("budget", budget.model_dump())
+
+            # Save AI message to checkpoint for conversation history
+            if last_answer:
+                try:
+                    graph.update_state(config, {"messages": [AIMessage(content=last_answer)]})
+                except Exception:
+                    pass
 
             yield _sse_event("done", {"status": "complete"})
 
