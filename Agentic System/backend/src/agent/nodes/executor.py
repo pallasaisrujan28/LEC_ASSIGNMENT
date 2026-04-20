@@ -6,10 +6,12 @@ Failed tools are retried once, then reported as errors.
 """
 
 import asyncio
+import logging
 from collections import defaultdict
 
 from src.agent.core.state import AgentState, Observation
 
+logger = logging.getLogger("agent.executor")
 MAX_RETRIES = 2
 
 
@@ -44,8 +46,11 @@ def _get_tool_map(tools: list) -> dict:
 
 async def _execute_step(step, tool_map, prev_results) -> Observation:
     """Execute a single plan step with retry logic."""
+    logger.info(f"[EXECUTOR] Executing step {step.step_id}: tool={step.tool}, args={step.args}")
+
     tool = tool_map.get(step.tool)
     if not tool:
+        logger.error(f"[EXECUTOR] Unknown tool: {step.tool}")
         return Observation(
             step_id=step.step_id,
             tool=step.tool,
@@ -67,6 +72,7 @@ async def _execute_step(step, tool_map, prev_results) -> Observation:
     for attempt in range(MAX_RETRIES):
         try:
             result = await tool.ainvoke(args)
+            logger.info(f"[EXECUTOR] Step {step.step_id} ({step.tool}) SUCCESS: {str(result)[:200]}")
             return Observation(
                 step_id=step.step_id,
                 tool=step.tool,
@@ -74,6 +80,7 @@ async def _execute_step(step, tool_map, prev_results) -> Observation:
                 result=result,
             )
         except Exception as e:
+            logger.warning(f"[EXECUTOR] Step {step.step_id} ({step.tool}) attempt {attempt+1} FAILED: {e}")
             if attempt == MAX_RETRIES - 1:
                 return Observation(
                     step_id=step.step_id,
@@ -113,8 +120,10 @@ def executor_node(state: AgentState) -> dict:
 
     plan = state["plan"]
     if not plan or not plan.steps:
+        logger.info("[EXECUTOR] No plan or empty steps — skipping execution")
         return {"observations": []}
 
+    logger.info(f"[EXECUTOR] Executing plan with {len(plan.steps)} steps")
     tools = get_all_tools()
     observations = asyncio.run(_execute_plan_async(plan.steps, tools))
 

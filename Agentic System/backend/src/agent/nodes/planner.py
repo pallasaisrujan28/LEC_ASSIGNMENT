@@ -4,10 +4,14 @@ The planner is smart about tool selection: it only includes tools that are
 actually needed for the query. It does NOT blindly use all available tools.
 """
 
+import logging
+
 from langchain_aws import ChatBedrockConverse
 from langchain_core.messages import SystemMessage, HumanMessage
 
 from src.agent.core.state import AgentState, Plan, PlanStep
+
+logger = logging.getLogger("agent.planner")
 from src.agent.core.budget import BudgetTracker
 
 PLANNER_SYSTEM_PROMPT = """You are a planning agent. Given a user query, create a structured plan to answer it.
@@ -24,13 +28,14 @@ IMPORTANT: Use the EXACT parameter names shown above. For example, wiki_summary 
 
 RULES:
 1. Only use tools that are ACTUALLY NEEDED for the query. Do NOT use all tools.
-2. If the query is simple (e.g. "what is 2+2"), use only the calculator. Don't search the web for it.
+2. ALWAYS use the calculator tool for ANY math, arithmetic, or numerical computation — even simple ones. Never do math yourself.
 3. If the query needs multiple tools, declare dependencies between steps.
 4. Independent steps (no dependencies) will run in parallel.
 5. Each step must have a clear reason for why it's needed.
 6. For factual data about countries, people, places, science, history — use wiki_summary FIRST. Only use web_search if you need real-time/current information that Wikipedia wouldn't have.
 7. web_search is for: current news, live prices, recent events, things that change daily. wiki_summary is for: population, GDP, area, history, definitions, established facts.
 8. When comparing two entities (e.g. populations of two countries), make separate wiki_summary calls for each — they can run in parallel since they have no dependencies.
+9. NEVER answer math questions directly. Always plan a calculator step.
 
 OUTPUT FORMAT (JSON):
 {
@@ -46,7 +51,7 @@ OUTPUT FORMAT (JSON):
   ]
 }
 
-If the query can be answered directly without any tools, return an empty steps list and put the answer in the thought field.
+If the query is purely conversational (greetings, opinions, no facts or math needed), return an empty steps list. For EVERYTHING else, use at least one tool.
 """
 
 REPLAN_TEMPLATE = """Previous plan results:
@@ -69,6 +74,9 @@ def _get_llm():
 
 def planner_node(state: AgentState) -> dict:
     """Generate or revise a plan based on the current state."""
+    logger.info(f"[PLANNER] Query: {state['query']}")
+    logger.info(f"[PLANNER] Iteration: {state['iteration']}, Observations: {len(state['observations'])}")
+
     llm = _get_llm()
     budget = BudgetTracker(state["budget"].max_budget_usd)
     budget.info = state["budget"]
@@ -81,6 +89,7 @@ def planner_node(state: AgentState) -> dict:
 
     history = get_conversation_context(state.get("messages", []))
     if history:
+        logger.info(f"[PLANNER] Conversation history found ({len(history)} chars)")
         messages.append(SystemMessage(
             content=f"CONVERSATION HISTORY:\n{history}\n\nUse this context to understand references like 'it', 'that', 'earlier', etc."
         ))
@@ -91,6 +100,7 @@ def planner_node(state: AgentState) -> dict:
             f"- {o.step_id} ({o.tool}): {'SUCCESS' if o.success else 'FAILED'} — {o.result or o.error}"
             for o in state["observations"]
         )
+        logger.info(f"[PLANNER] Re-planning with {len(state['observations'])} observations")
         messages.append(
             HumanMessage(
                 content=REPLAN_TEMPLATE.format(observations=obs_text)
@@ -104,9 +114,11 @@ def planner_node(state: AgentState) -> dict:
     structured_llm = llm.with_structured_output(Plan)
     plan = structured_llm.invoke(messages)
 
-    # Track token usage from the response
-    # Note: with_structured_output doesn't expose usage directly,
-    # so we estimate based on message lengths
+    logger.info(f"[PLANNER] Plan thought: {plan.thought}")
+    for step in plan.steps:
+        logger.info(f"[PLANNER] Step {step.step_id}: tool={step.tool}, args={step.args}, depends_on={step.depends_on}")
+
+    # Track token usage
     budget.record_usage(
         input_tokens=sum(len(m.content) // 4 for m in messages),
         output_tokens=len(plan.model_dump_json()) // 4,

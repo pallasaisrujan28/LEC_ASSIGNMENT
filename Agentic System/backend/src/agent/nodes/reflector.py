@@ -5,6 +5,7 @@ The reflector synthesizes all tool results and either:
 2. Requests a re-plan (if more work is needed)
 """
 
+import logging
 import os
 
 from langchain_aws import ChatBedrockConverse
@@ -13,6 +14,8 @@ from pydantic import BaseModel, Field
 
 from src.agent.core.state import AgentState
 from src.agent.core.budget import BudgetTracker
+
+logger = logging.getLogger("agent.reflector")
 
 REFLECTOR_SYSTEM_PROMPT = """You are a reflection agent. You review the results of tool executions and decide what to do next.
 
@@ -54,6 +57,8 @@ def _get_llm():
 
 def reflector_node(state: AgentState) -> dict:
     """Review observations and decide: answer or re-plan."""
+    logger.info(f"[REFLECTOR] Reviewing {len(state['observations'])} observations, iteration={state.get('iteration', 0)}")
+
     llm = _get_llm()
     budget = BudgetTracker(state["budget"].max_budget_usd)
     budget.info = state["budget"]
@@ -69,22 +74,35 @@ def reflector_node(state: AgentState) -> dict:
     if state["plan"]:
         plan_text = f"Plan thought: {state['plan'].thought}\nSteps: {', '.join(s.tool for s in state['plan'].steps)}"
 
-    # Give the reflector context about how many iterations we've done
+    # Include conversation history so reflector knows about past turns
+    from src.agent.core.memory import get_conversation_context
+
+    history = get_conversation_context(state.get("messages", []))
+    history_section = ""
+    if history:
+        history_section = f"\n\nCONVERSATION HISTORY:\n{history}\n"
+
+    # Force answer after 2+ iterations
     iteration = state.get("iteration", 0)
+    force_answer = iteration >= 2
 
     prompt_suffix = ""
-    if iteration >= 2:
-        prompt_suffix = f"\n\nNote: This is iteration {iteration}. If you have enough information to provide a reasonable answer, please do so rather than requesting another re-plan."
+    if force_answer:
+        prompt_suffix = f"\n\nIMPORTANT: This is iteration {iteration}. You MUST provide a final answer now using whatever information you have. Do NOT request a re-plan. Answer with partial information if needed."
 
     messages = [
         SystemMessage(content=REFLECTOR_SYSTEM_PROMPT),
         HumanMessage(
-            content=f"Original query: {state['query']}\n\n{plan_text}\n\nTool results:\n{obs_text}{prompt_suffix}"
+            content=f"Original query: {state['query']}{history_section}\n{plan_text}\n\nTool results:\n{obs_text}{prompt_suffix}"
         ),
     ]
 
     structured_llm = llm.with_structured_output(ReflectionResult)
     result = structured_llm.invoke(messages)
+
+    logger.info(f"[REFLECTOR] is_done={result.is_done}, answer={str(result.final_answer)[:100] if result.final_answer else 'None'}")
+    if result.feedback:
+        logger.info(f"[REFLECTOR] Feedback: {result.feedback[:200]}")
 
     # Track usage
     budget.record_usage(

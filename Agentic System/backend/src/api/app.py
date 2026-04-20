@@ -1,6 +1,7 @@
 """FastAPI application — POST /agent/query + POST /agent/stream endpoints."""
 
 import json
+import logging
 import os
 import sys
 import uuid
@@ -9,6 +10,14 @@ from dotenv import load_dotenv
 
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".env"))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("agent.api")
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -92,9 +101,24 @@ def agent_stream(request: QueryRequest):
     def generate():
         try:
             graph = build_graph()
+            config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
+
+            # Load existing messages from checkpoint if this thread has history
+            existing_messages = []
+            try:
+                existing = graph.get_state(config)
+                if existing and existing.values and existing.values.get("messages"):
+                    existing_messages = list(existing.values["messages"])
+                    logger.info(f"[STREAM] Found {len(existing_messages)} existing messages for thread {thread_id}")
+            except Exception as e:
+                logger.warning(f"[STREAM] Could not load existing state: {e}")
+
+            # Build state with accumulated messages
+            all_messages = existing_messages + [HumanMessage(content=request.query)]
+
             initial_state: AgentState = {
                 "query": request.query,
-                "messages": [HumanMessage(content=request.query)],
+                "messages": all_messages,
                 "plan": None,
                 "observations": [],
                 "reflections": [],
@@ -103,7 +127,8 @@ def agent_stream(request: QueryRequest):
                 "final_answer": None,
                 "error": None,
             }
-            config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
+
+            logger.info(f"[STREAM] Starting stream for query: {request.query[:100]}, thread: {thread_id}, messages: {len(all_messages)}")
 
             last_answer = None
             for event in graph.stream(initial_state, config=config, stream_mode="updates"):

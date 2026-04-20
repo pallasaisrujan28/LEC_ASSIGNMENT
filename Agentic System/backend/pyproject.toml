@@ -28,6 +28,7 @@ dependencies = [
     "httpx",
     "pyyaml",
     "aiobotocore>=3.4.0",
+    "tavily-python>=0.7.23",
 ]
 
 [project.optional-dependencies]
