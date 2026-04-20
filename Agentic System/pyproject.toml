@@ -1,0 +1,45 @@
+[project]
+name = "agentic-system"
+version = "0.1.0"
+description = "Production-grade AI agent with Plan-and-Execute architecture"
+requires-python = ">=3.11"
+dependencies = [
+    # Core
+    "langgraph>=0.2.0",
+    "langchain>=0.3.0",
+    "langchain-aws",
+    "langgraph-checkpoint-aws",
+    "langchain-mcp-adapters",
+    "mcp",
+    "fastapi",
+    "uvicorn",
+    # Tool server deps
+    "duckduckgo-search",
+    "sympy",
+    "wikipedia-api",
+    "sentence-transformers",
+    "chromadb",
+    "pytz",
+    # Utilities
+    "tiktoken",
+    "pydantic",
+    "boto3",
+    "python-dotenv",
+    "httpx",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "deepeval",
+    "ruff",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100

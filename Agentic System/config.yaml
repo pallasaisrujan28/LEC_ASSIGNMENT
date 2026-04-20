@@ -1,0 +1,37 @@
+# Agent Configuration
+agent:
+  max_iterations: 8
+  max_retries_per_tool: 2
+
+# Budget
+budget:
+  max_tokens: 50000
+  max_cost_usd: 0.50
+
+# LLM
+llm:
+  provider: bedrock
+  region: us-west-2
+
+# MCP Tool Servers
+tools:
+  web_search:
+    command: python
+    args: ["src/tools/web_search_server.py"]
+    transport: stdio
+  math:
+    command: python
+    args: ["src/tools/math_server.py"]
+    transport: stdio
+  wikipedia:
+    command: python
+    args: ["src/tools/wikipedia_server.py"]
+    transport: stdio
+  doc_qa:
+    command: python
+    args: ["src/tools/doc_qa_server.py"]
+    transport: stdio
+  datetime_tool:
+    command: python
+    args: ["src/tools/datetime_server.py"]
+    transport: stdio
