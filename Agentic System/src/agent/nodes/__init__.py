@@ -1,1 +1,1 @@
-# agent nodes — planner, executor, reflector
+"""Agent nodes — planner, executor, reflector."""

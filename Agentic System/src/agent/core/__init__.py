@@ -1,1 +1,1 @@
-# agent core — state, graph wiring, budget tracking
+"""Agent core — state, graph, budget, memory."""
