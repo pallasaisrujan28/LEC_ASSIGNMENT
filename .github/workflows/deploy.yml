@@ -74,8 +74,8 @@ jobs:
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest"
-          docker build -t $IMAGE_URI .
-          docker push $IMAGE_URI
+          docker buildx create --use --name arm64builder 2>/dev/null || true
+          docker buildx build --platform linux/arm64 -t $IMAGE_URI --push .
           echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_OUTPUT
 
       - name: Deploy to AgentCore Runtime
