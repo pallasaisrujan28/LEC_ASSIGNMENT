@@ -29,12 +29,6 @@ variable "github_repo" {
   default = "pallasaisrujan28/LEC_ASSIGNMENT"
 }
 
-variable "amplify_github_token" {
-  description = "GitHub personal access token for Amplify"
-  type        = string
-  sensitive   = true
-}
-
 # ══════════════════════════════════════════════════════════════════════════
 # 1. ECR Repository — stores the backend Docker image
 # ══════════════════════════════════════════════════════════════════════════
@@ -175,45 +169,113 @@ resource "aws_cloudformation_stack" "agentcore_memory" {
 }
 
 # ══════════════════════════════════════════════════════════════════════════
-# 4. Amplify App — hosts the Next.js frontend
+# 4. S3 + CloudFront — hosts the Next.js static frontend
 # ══════════════════════════════════════════════════════════════════════════
 
-resource "aws_amplify_app" "frontend" {
-  name         = "${var.project_name}-frontend"
-  repository   = "https://github.com/${var.github_repo}"
-  access_token = var.amplify_github_token
+resource "aws_s3_bucket" "frontend" {
+  bucket        = "${var.project_name}-frontend-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+}
 
-  build_spec = <<-EOT
-    version: 1
-    applications:
-      - frontend:
-          phases:
-            preBuild:
-              commands:
-                - cd "Agentic System/frontend"
-                - npm ci
-            build:
-              commands:
-                - npm run build
-          artifacts:
-            baseDirectory: "Agentic System/frontend/.next"
-            files:
-              - '**/*'
-          cache:
-            paths:
-              - "Agentic System/frontend/node_modules/**/*"
-        appRoot: "Agentic System/frontend"
-  EOT
+resource "aws_s3_bucket_website_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
 
-  environment_variables = {
-    NEXT_PUBLIC_API_URL = "https://api.placeholder.com" # Updated after AgentCore Runtime deploy
+  index_document {
+    suffix = "index.html"
+  }
+
+  error_document {
+    key = "index.html"
   }
 }
 
-resource "aws_amplify_branch" "main" {
-  app_id      = aws_amplify_app.frontend.id
-  branch_name = "main"
-  stage       = "PRODUCTION"
+resource "aws_s3_bucket_public_access_block" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  block_public_acls       = false
+  block_public_policy     = false
+  ignore_public_acls      = false
+  restrict_public_buckets = false
+}
+
+resource "aws_s3_bucket_policy" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "CloudFrontAccess"
+        Effect    = "Allow"
+        Principal = {
+          Service = "cloudfront.amazonaws.com"
+        }
+        Action   = "s3:GetObject"
+        Resource = "${aws_s3_bucket.frontend.arn}/*"
+        Condition = {
+          StringEquals = {
+            "AWS:SourceArn" = aws_cloudfront_distribution.frontend.arn
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_cloudfront_origin_access_control" "frontend" {
+  name                              = "${var.project_name}-frontend-oac"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+resource "aws_cloudfront_distribution" "frontend" {
+  enabled             = true
+  default_root_object = "index.html"
+  price_class         = "PriceClass_100"
+
+  origin {
+    domain_name              = aws_s3_bucket.frontend.bucket_regional_domain_name
+    origin_id                = "s3-frontend"
+    origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
+  }
+
+  default_cache_behavior {
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "s3-frontend"
+    viewer_protocol_policy = "redirect-to-https"
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+  }
+
+  custom_error_response {
+    error_code         = 403
+    response_code      = 200
+    response_page_path = "/index.html"
+  }
+
+  custom_error_response {
+    error_code         = 404
+    response_code      = 200
+    response_page_path = "/index.html"
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -344,12 +406,16 @@ output "agentcore_memory_id" {
   value = aws_cloudformation_stack.agentcore_memory.outputs["MemoryId"]
 }
 
-output "amplify_app_id" {
-  value = aws_amplify_app.frontend.id
+output "frontend_bucket" {
+  value = aws_s3_bucket.frontend.bucket
 }
 
-output "amplify_default_domain" {
-  value = aws_amplify_app.frontend.default_domain
+output "frontend_url" {
+  value = "https://${aws_cloudfront_distribution.frontend.domain_name}"
+}
+
+output "cloudfront_distribution_id" {
+  value = aws_cloudfront_distribution.frontend.id
 }
 
 output "github_actions_role_arn" {

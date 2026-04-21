@@ -8,7 +8,8 @@ on:
 env:
   AWS_REGION: us-west-2
   ECR_REPO: lec-agent-backend
-  AMPLIFY_APP_ID: d2tey157rgynqr
+  CLOUDFRONT_DIST_ID: ELEWWHZ0YPIZP
+  S3_FRONTEND_BUCKET: lec-agent-frontend-866647877267
 
 permissions:
   id-token: write
@@ -104,11 +105,14 @@ jobs:
             }' \
             --region ${{ env.AWS_REGION }} || echo "Runtime may already exist — updating instead"
 
-  # ── Step 3: Frontend — Amplify auto-deploys from main ───────────────
+  # ── Step 3: Frontend — build + deploy to S3 + CloudFront ──────────────
   frontend:
     name: Deploy Frontend
     needs: infra
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "Agentic System/frontend"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -123,17 +127,25 @@ jobs:
             echo "changed=false" >> $GITHUB_OUTPUT
           fi
 
+      - uses: actions/setup-node@v4
+        if: steps.changes.outputs.changed == 'true'
+        with:
+          node-version: "20"
+
+      - name: Build frontend
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          npm ci
+          npm run build
+
       - uses: aws-actions/configure-aws-credentials@v4
         if: steps.changes.outputs.changed == 'true'
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Trigger Amplify build
+      - name: Deploy to S3 + invalidate CloudFront
         if: steps.changes.outputs.changed == 'true'
         run: |
-          aws amplify start-job \
-            --app-id ${{ env.AMPLIFY_APP_ID }} \
-            --branch-name main \
-            --job-type RELEASE \
-            --region ${{ env.AWS_REGION }}
+          aws s3 sync out/ s3://${{ env.S3_FRONTEND_BUCKET }}/ --delete
+          aws cloudfront create-invalidation --distribution-id ${{ env.CLOUDFRONT_DIST_ID }} --paths "/*"
