@@ -84,3 +84,6 @@ Try these in the chat interface:
 **Conversational (no tools):**
 > Hello, how are you?
 
+## Documentation
+
+See [docs/technical-documentation.md](docs/technical-documentation.md) for the full technical writeup covering architecture, tools, guardrails, evaluation, prompt ablation, scaling, and AI usage.
