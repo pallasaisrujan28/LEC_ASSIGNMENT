@@ -1,63 +1,67 @@
-"""Document Q&A tool — Bedrock RetrieveAndGenerate with inline documents.
+"""Document Q&A tool — retrieves relevant passages from user-provided text.
 
-Answers questions about user-provided text content using Bedrock's
-RetrieveAndGenerate API with ExternalSourcesConfiguration.
-No pre-built knowledge base needed — the document is passed inline.
+Chunks the document, finds the most relevant passages to the question
+using simple keyword/semantic matching, and returns them. The reflector
+node (main LLM) generates the final answer from these passages.
 """
-
-import os
 
 from langchain_core.tools import tool
 
 
 @tool
-def document_qa(question: str, document_text: str) -> str:
-    """Answer a question based on the provided document text.
+def document_qa(question: str, document_text: str) -> list[dict]:
+    """Find relevant passages in the provided document text that answer the question.
 
-    Takes a question and document content, uses Bedrock to find
-    relevant passages and generate an answer grounded in the document.
-    Use when the user provides text and asks questions about it.
+    Chunks the document and returns the most relevant passages.
+    Use when the user provides text content and asks questions about it.
+    The agent's reflector will synthesize the final answer from these passages.
     """
-    import boto3
-
-    region = os.environ.get("AWS_REGION", "us-west-2")
-    model_id = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6")
-
     if not document_text or not document_text.strip():
-        return "No document text provided. Please provide the document content to search."
+        return [{"passage": "No document text provided.", "relevance": 0}]
 
-    # Truncate very long documents to avoid token limits
-    max_chars = 50000
-    if len(document_text) > max_chars:
-        document_text = document_text[:max_chars] + "\n\n[Document truncated]"
+    # Chunk the document into paragraphs
+    paragraphs = [p.strip() for p in document_text.split("\n") if p.strip() and len(p.strip()) > 20]
 
-    try:
-        client = boto3.client("bedrock-agent-runtime", region_name=region)
-        response = client.retrieve_and_generate(
-            input={"text": question},
-            retrieveAndGenerateConfiguration={
-                "type": "EXTERNAL_SOURCES",
-                "externalSourcesConfiguration": {
-                    "modelArn": f"arn:aws:bedrock:{region}::foundation-model/{model_id}",
-                    "sources": [
-                        {
-                            "sourceType": "BYTE_CONTENT",
-                            "byteContent": {
-                                "contentType": "text/plain",
-                                "data": document_text.encode("utf-8"),
-                                "identifier": "user-document",
-                            },
-                        }
-                    ],
-                },
-            },
-        )
+    # If no paragraphs, try splitting by sentences
+    if not paragraphs:
+        import re
+        sentences = re.split(r'(?<=[.!?])\s+', document_text.strip())
+        # Group sentences into chunks of ~3
+        paragraphs = []
+        for i in range(0, len(sentences), 3):
+            chunk = " ".join(sentences[i:i+3])
+            if len(chunk) > 20:
+                paragraphs.append(chunk)
 
-        output = response.get("output", {}).get("text", "")
-        if not output:
-            return f"Could not find an answer to '{question}' in the provided document."
+    if not paragraphs:
+        return [{"passage": document_text[:500], "relevance": 1}]
 
-        return output
+    # Score each paragraph by keyword overlap with the question
+    question_words = set(question.lower().split())
+    # Remove common stop words
+    stop_words = {"what", "is", "the", "a", "an", "of", "in", "to", "and", "or", "how", "does", "do", "it", "this", "that", "for", "on", "with", "about"}
+    question_keywords = question_words - stop_words
 
-    except Exception as e:
-        return f"Document Q&A failed: {str(e)}"
+    scored = []
+    for p in paragraphs:
+        p_lower = p.lower()
+        # Count keyword matches
+        matches = sum(1 for w in question_keywords if w in p_lower)
+        scored.append((matches, p))
+
+    # Sort by relevance (most matches first), take top 5
+    scored.sort(key=lambda x: x[0], reverse=True)
+    top = scored[:5]
+
+    results = []
+    for score, passage in top:
+        results.append({
+            "passage": passage[:1000],  # Cap passage length
+            "relevance": score,
+        })
+
+    # If no keyword matches at all, return first few paragraphs as context
+    if all(r["relevance"] == 0 for r in results):
+        results = [{"passage": p[:1000], "relevance": 1} for p in paragraphs[:3]]
+
+    return results
