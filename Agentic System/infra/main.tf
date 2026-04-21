@@ -328,6 +328,7 @@ resource "aws_iam_role_policy" "github_actions_policy" {
           "bedrock-agentcore:*",
           "amplify:*",
           "cloudformation:*",
+          "cloudfront:*",
           "iam:*",
           "s3:*",
           "sts:GetCallerIdentity",
