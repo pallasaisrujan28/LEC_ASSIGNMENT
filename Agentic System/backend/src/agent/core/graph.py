@@ -76,6 +76,22 @@ def run_agent(query: str, budget_usd: float = 20.0, thread_id: str = "default") 
     """
     graph = build_graph()
 
+    # Input validation
+    from src.agent.core.guardrails import validate_input
+    try:
+        query = validate_input(query)
+    except Exception as e:
+        return {
+            "query": query,
+            "plan": None,
+            "observations": [],
+            "final_answer": None,
+            "reflections": [],
+            "iterations": 0,
+            "budget": {},
+            "error": str(e),
+        }
+
     initial_state: AgentState = {
         "query": query,
         "messages": [HumanMessage(content=query)],
