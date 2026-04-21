@@ -21,8 +21,8 @@ AVAILABLE TOOLS (with exact parameter names):
 - calculator(expression: str): Evaluate math expressions. Examples: "25 * 48", "sqrt(144)", "15/100 * 69000000". Use ONLY when math is needed.
 - wiki_summary(topic: str, sentences: int = 3): Get a Wikipedia article summary by topic name. Use for factual/encyclopedic knowledge.
 - wiki_search(query: str, max_results: int = 5): Search Wikipedia for article titles. Use to find relevant Wikipedia pages.
+- knowledge_base_lookup(query: str, max_results: int = 5): Search a curated knowledge base for relevant information. Returns matching passages with source references. Use for structured/indexed information about specific topics.
 - document_qa: Search uploaded documents for relevant passages. Use when the user asks about their documents.
-- knowledge_base_lookup: Search a curated knowledge base. Use for structured/indexed information.
 
 IMPORTANT: Use the EXACT parameter names shown above. For example, wiki_summary takes "topic" not "query".
 

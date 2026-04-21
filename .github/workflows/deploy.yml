@@ -125,7 +125,8 @@ jobs:
                 {"name": "LANGCHAIN_TRACING_V2", "value": "true"},
                 {"name": "LANGCHAIN_ENDPOINT", "value": "${{ secrets.LANGCHAIN_ENDPOINT }}"},
                 {"name": "LANGCHAIN_API_KEY", "value": "${{ secrets.LANGCHAIN_API_KEY }}"},
-                {"name": "LANGCHAIN_PROJECT", "value": "LEC-AGENT"}
+                {"name": "LANGCHAIN_PROJECT", "value": "LEC-AGENT"},
+                {"name": "BEDROCK_KB_ID", "value": "${{ secrets.BEDROCK_KB_ID }}"}
               ]
             }]
           }
@@ -145,6 +146,15 @@ jobs:
             --query 'service.serviceName' --output text
 
           echo "Service updated, deployment in progress"
+
+      - name: Sync Knowledge Base
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          aws bedrock-agent start-ingestion-job \
+            --knowledge-base-id ${{ secrets.BEDROCK_KB_ID }} \
+            --data-source-id ${{ secrets.BEDROCK_KB_DATA_SOURCE_ID }} \
+            --region ${AWS_REGION} \
+            --query 'ingestionJob.ingestionJobId' --output text || echo "KB sync skipped (no data source changes)"
 
   # ── Step 3: Frontend — build + deploy to S3 + CloudFront ──────────────
   frontend:
@@ -190,3 +200,23 @@ jobs:
         run: |
           aws s3 sync out/ s3://${{ env.S3_FRONTEND_BUCKET }}/ --delete
           aws cloudfront create-invalidation --distribution-id ${{ env.CLOUDFRONT_DIST_ID }} --paths "/*"
+
+  # ── Step 4: Sync Knowledge Base ─────────────────────────────────────
+  sync-kb:
+    name: Sync Knowledge Base
+    needs: infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Start KB ingestion job
+        run: |
+          echo "Starting knowledge base sync..."
+          aws bedrock-agent start-ingestion-job \
+            --knowledge-base-id ${{ secrets.BEDROCK_KB_ID }} \
+            --data-source-id ${{ secrets.BEDROCK_KB_DATA_SOURCE_ID }} \
+            --region ${AWS_REGION} \
+            --query 'ingestionJob.ingestionJobId' --output text || echo "KB sync skipped"

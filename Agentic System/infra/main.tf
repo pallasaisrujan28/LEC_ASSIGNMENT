@@ -634,6 +634,9 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "bedrock:InvokeModelWithResponseStream",
           "bedrock:ApplyGuardrail",
           "bedrock-agentcore:*",
+          "bedrock-agent:*",
+          "bedrock:Retrieve",
+          "bedrock:RetrieveAndGenerate",
         ]
         Resource = "*"
       }
@@ -797,6 +800,9 @@ resource "aws_iam_role_policy" "github_actions_policy" {
         "ecs:*",
         "bedrock:*",
         "bedrock-agentcore:*",
+        "bedrock-agent:*",
+        "aoss:*",
+        "s3vectors:*",
         "cloudformation:*",
         "cloudfront:*",
         "iam:*",
@@ -810,6 +816,140 @@ resource "aws_iam_role_policy" "github_actions_policy" {
       Resource = "*"
     }]
   })
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 11. Bedrock Knowledge Base — S3 Vectors (via CloudFormation)
+# ══════════════════════════════════════════════════════════════════════════
+
+resource "aws_s3_bucket" "kb_docs" {
+  bucket        = "${var.project_name}-kb-docs-${data.aws_caller_identity.current.account_id}"
+  force_destroy = true
+}
+
+# IAM role for Bedrock KB
+resource "aws_iam_role" "bedrock_kb" {
+  name = "${var.project_name}-bedrock-kb"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "bedrock.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+      Condition = {
+        StringEquals = {
+          "aws:SourceAccount" = data.aws_caller_identity.current.account_id
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "bedrock_kb_policy" {
+  name = "${var.project_name}-bedrock-kb-policy"
+  role = aws_iam_role.bedrock_kb.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          aws_s3_bucket.kb_docs.arn,
+          "${aws_s3_bucket.kb_docs.arn}/*",
+        ]
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3vectors:*"]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+
+resource "aws_cloudformation_stack" "bedrock_kb" {
+  name = "${var.project_name}-knowledge-base"
+
+  capabilities = ["CAPABILITY_IAM"]
+
+  template_body = jsonencode({
+    AWSTemplateFormatVersion = "2010-09-09"
+    Resources = {
+      VectorBucket = {
+        Type = "AWS::S3Vectors::VectorBucket"
+        Properties = {
+          VectorBucketName = "${var.project_name}-vectors"
+        }
+      }
+      VectorIndex = {
+        Type = "AWS::S3Vectors::Index"
+        Properties = {
+          VectorBucketArn = { "Fn::GetAtt" = ["VectorBucket", "VectorBucketArn"] }
+          IndexName       = "lec-kb-idx"
+          DataType        = "float32"
+          Dimension       = 1024
+          DistanceMetric  = "cosine"
+          MetadataConfiguration = {
+            NonFilterableMetadataKeys = ["AMAZON_BEDROCK_TEXT"]
+          }
+        }
+      }
+      KnowledgeBase = {
+        Type      = "AWS::Bedrock::KnowledgeBase"
+        DependsOn = ["VectorIndex"]
+        Properties = {
+          Name    = "${var.project_name}-knowledge-base"
+          RoleArn = aws_iam_role.bedrock_kb.arn
+          KnowledgeBaseConfiguration = {
+            Type = "VECTOR"
+            VectorKnowledgeBaseConfiguration = {
+              EmbeddingModelArn = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+            }
+          }
+          StorageConfiguration = {
+            Type = "S3_VECTORS"
+            S3VectorsConfiguration = {
+              VectorBucketArn = { "Fn::GetAtt" = ["VectorBucket", "VectorBucketArn"] }
+              IndexArn        = { "Fn::GetAtt" = ["VectorIndex", "IndexArn"] }
+            }
+          }
+        }
+      }
+      DataSource = {
+        Type = "AWS::Bedrock::DataSource"
+        Properties = {
+          KnowledgeBaseId = { "Fn::GetAtt" = ["KnowledgeBase", "KnowledgeBaseId"] }
+          Name            = "${var.project_name}-s3-source"
+          DataSourceConfiguration = {
+            Type = "S3"
+            S3Configuration = {
+              BucketArn = aws_s3_bucket.kb_docs.arn
+            }
+          }
+        }
+      }
+    }
+    Outputs = {
+      KnowledgeBaseId = {
+        Value = { "Fn::GetAtt" = ["KnowledgeBase", "KnowledgeBaseId"] }
+      }
+      DataSourceId = {
+        Value = { "Fn::GetAtt" = ["DataSource", "DataSourceId"] }
+      }
+    }
+  })
+
+  depends_on = [aws_iam_role_policy.bedrock_kb_policy]
 }
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -866,4 +1006,16 @@ output "ecs_execution_role_arn" {
 
 output "ecs_task_role_arn" {
   value = aws_iam_role.ecs_task.arn
+}
+
+output "kb_id" {
+  value = aws_cloudformation_stack.bedrock_kb.outputs["KnowledgeBaseId"]
+}
+
+output "kb_data_source_id" {
+  value = aws_cloudformation_stack.bedrock_kb.outputs["DataSourceId"]
+}
+
+output "kb_docs_bucket" {
+  value = aws_s3_bucket.kb_docs.bucket
 }

@@ -3,10 +3,10 @@
 from src.tools.web_search import web_search
 from src.tools.calculator import calculator
 from src.tools.wikipedia import wiki_summary, wiki_search
+from src.tools.knowledge_base import knowledge_base_lookup
 
 # TODO: Add after team clarification
 # from src.tools.document_qa import document_qa
-# from src.tools.knowledge_base_lookup import knowledge_base_lookup
 
 
 def get_all_tools() -> list:
@@ -16,6 +16,6 @@ def get_all_tools() -> list:
         calculator,
         wiki_summary,
         wiki_search,
+        knowledge_base_lookup,
         # document_qa,
-        # knowledge_base_lookup,
     ]
