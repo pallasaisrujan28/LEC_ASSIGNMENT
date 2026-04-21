@@ -4,9 +4,7 @@ from src.tools.web_search import web_search
 from src.tools.calculator import calculator
 from src.tools.wikipedia import wiki_summary, wiki_search
 from src.tools.knowledge_base import knowledge_base_lookup
-
-# TODO: Add after team clarification
-# from src.tools.document_qa import document_qa
+from src.tools.document_qa import document_qa
 
 
 def get_all_tools() -> list:
@@ -17,5 +15,5 @@ def get_all_tools() -> list:
         wiki_summary,
         wiki_search,
         knowledge_base_lookup,
-        # document_qa,
+        document_qa,
     ]

@@ -22,7 +22,7 @@ AVAILABLE TOOLS (with exact parameter names):
 - wiki_summary(topic: str, sentences: int = 3): Get a Wikipedia article summary by topic name. Use for factual/encyclopedic knowledge.
 - wiki_search(query: str, max_results: int = 5): Search Wikipedia for article titles. Use to find relevant Wikipedia pages.
 - knowledge_base_lookup(query: str, max_results: int = 5): Search a curated knowledge base for relevant information. Returns matching passages with source references. Use for structured/indexed information about specific topics.
-- document_qa: Search uploaded documents for relevant passages. Use when the user asks about their documents.
+- document_qa(question: str, document_text: str): Answer a question based on provided document text. Use when the user pastes or provides text content and asks questions about it. Pass the user's text as document_text.
 
 IMPORTANT: Use the EXACT parameter names shown above. For example, wiki_summary takes "topic" not "query".
 
