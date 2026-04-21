@@ -83,27 +83,29 @@ jobs:
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest"
-          # AgentCore Runtime deployment via AWS CLI
-          aws bedrock-agentcore-control create-agent-runtime \
-            --agent-runtime-name lec-agent-runtime \
-            --description "LEC Agentic System backend" \
-            --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"${IMAGE_URI}\"}}" \
-            --role-arn ${{ secrets.AGENTCORE_ROLE_ARN }} \
-            --environment-variables '{
-              "BEDROCK_MODEL_ID": "${{ secrets.BEDROCK_MODEL_ID }}",
-              "AWS_REGION": "us-west-2",
-              "AGENTCORE_MEMORY_ID": "${{ secrets.AGENTCORE_MEMORY_ID }}",
-              "AGENTCORE_SUMMARY_STRATEGY_ID": "${{ secrets.AGENTCORE_SUMMARY_STRATEGY_ID }}",
-              "BEDROCK_GUARDRAIL_ID": "${{ secrets.BEDROCK_GUARDRAIL_ID }}",
-              "BEDROCK_GUARDRAIL_VERSION": "${{ secrets.BEDROCK_GUARDRAIL_VERSION }}",
-              "TAVILY_API_KEY": "${{ secrets.TAVILY_API_KEY }}",
-              "BUDGET_CAP_USD": "20.0",
-              "LANGCHAIN_TRACING_V2": "true",
-              "LANGCHAIN_ENDPOINT": "${{ secrets.LANGCHAIN_ENDPOINT }}",
-              "LANGCHAIN_API_KEY": "${{ secrets.LANGCHAIN_API_KEY }}",
-              "LANGCHAIN_PROJECT": "LEC-AGENT"
-            }' \
-            --region ${{ env.AWS_REGION }} || echo "Runtime may already exist — updating instead"
+
+          # Check if runtime already exists
+          EXISTING=$(aws bedrock-agentcore-control list-agent-runtimes --region ${AWS_REGION} \
+            --query "agentRuntimes[?agentRuntimeName=='lec_agent_runtime'].agentRuntimeId" --output text 2>/dev/null || echo "")
+
+          if [ -z "$EXISTING" ]; then
+            echo "Creating new AgentCore Runtime..."
+            aws bedrock-agentcore-control create-agent-runtime \
+              --agent-runtime-name lec_agent_runtime \
+              --description "LEC Agentic System backend" \
+              --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"'"${IMAGE_URI}"'"}}' \
+              --role-arn ${{ secrets.AGENTCORE_ROLE_ARN }} \
+              --network-configuration '{"networkMode":"PUBLIC"}' \
+              --environment-variables '{"BEDROCK_MODEL_ID":"${{ secrets.BEDROCK_MODEL_ID }}","AWS_REGION":"us-west-2","AGENTCORE_MEMORY_ID":"${{ secrets.AGENTCORE_MEMORY_ID }}","AGENTCORE_SUMMARY_STRATEGY_ID":"${{ secrets.AGENTCORE_SUMMARY_STRATEGY_ID }}","BEDROCK_GUARDRAIL_ID":"${{ secrets.BEDROCK_GUARDRAIL_ID }}","BEDROCK_GUARDRAIL_VERSION":"${{ secrets.BEDROCK_GUARDRAIL_VERSION }}","TAVILY_API_KEY":"${{ secrets.TAVILY_API_KEY }}","BUDGET_CAP_USD":"20.0","LANGCHAIN_TRACING_V2":"true","LANGCHAIN_ENDPOINT":"${{ secrets.LANGCHAIN_ENDPOINT }}","LANGCHAIN_API_KEY":"${{ secrets.LANGCHAIN_API_KEY }}","LANGCHAIN_PROJECT":"LEC-AGENT"}' \
+              --region ${AWS_REGION}
+          else
+            echo "Updating existing AgentCore Runtime: $EXISTING"
+            aws bedrock-agentcore-control update-agent-runtime \
+              --agent-runtime-id "$EXISTING" \
+              --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"'"${IMAGE_URI}"'"}}' \
+              --environment-variables '{"BEDROCK_MODEL_ID":"${{ secrets.BEDROCK_MODEL_ID }}","AWS_REGION":"us-west-2","AGENTCORE_MEMORY_ID":"${{ secrets.AGENTCORE_MEMORY_ID }}","AGENTCORE_SUMMARY_STRATEGY_ID":"${{ secrets.AGENTCORE_SUMMARY_STRATEGY_ID }}","BEDROCK_GUARDRAIL_ID":"${{ secrets.BEDROCK_GUARDRAIL_ID }}","BEDROCK_GUARDRAIL_VERSION":"${{ secrets.BEDROCK_GUARDRAIL_VERSION }}","TAVILY_API_KEY":"${{ secrets.TAVILY_API_KEY }}","BUDGET_CAP_USD":"20.0","LANGCHAIN_TRACING_V2":"true","LANGCHAIN_ENDPOINT":"${{ secrets.LANGCHAIN_ENDPOINT }}","LANGCHAIN_API_KEY":"${{ secrets.LANGCHAIN_API_KEY }}","LANGCHAIN_PROJECT":"LEC-AGENT"}' \
+              --region ${AWS_REGION}
+          fi
 
   # ── Step 3: Frontend — build + deploy to S3 + CloudFront ──────────────
   frontend:

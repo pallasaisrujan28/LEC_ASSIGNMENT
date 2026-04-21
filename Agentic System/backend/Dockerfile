@@ -1,5 +1,6 @@
 FROM python:3.11-slim
 
+# LEC Agentic System Backend
 WORKDIR /app
 
 # Install uv
