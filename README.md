@@ -86,4 +86,4 @@ Try these in the chat interface:
 
 ## Documentation
 
-See [Agentic%20System/docs/technical-documentation.md](Agentic System/docs/technical-documentation.md) for the full technical writeup covering architecture, tools, guardrails, evaluation, prompt ablation, scaling, and AI usage.
+See Agentic System/docs/technical-documentation.md for the full technical writeup covering architecture, tools, guardrails, evaluation, prompt ablation, scaling, and AI usage.
