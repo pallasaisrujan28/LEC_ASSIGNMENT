@@ -1,3 +1,4 @@
+// SSE client — connects to the backend ALB for streaming agent responses
 export async function streamAgent(
   query: string,
   budgetLimit: number,
