@@ -682,13 +682,12 @@ resource "aws_iam_role_policy" "github_actions_policy" {
         "bedrock-agentcore:*",
         "cloudformation:*",
         "cloudfront:*",
-        "iam:PassRole",
-        "iam:GetRole",
+        "iam:*",
         "s3:*",
         "sts:GetCallerIdentity",
         "logs:*",
         "elasticloadbalancing:*",
-        "ec2:Describe*",
+        "ec2:*",
         "application-autoscaling:*",
       ]
       Resource = "*"
