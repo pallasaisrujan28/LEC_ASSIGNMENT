@@ -37,7 +37,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("agent.api")
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
@@ -48,6 +48,10 @@ from src.agent.core.guardrails import (
     validate_input, apply_bedrock_guardrail, sanitize_output, check_grounding,
 )
 from src.agent.core.memory import maybe_summarize
+
+# ── Document store (session → extracted PDF text) ───────────────────────
+# In-memory store keyed by thread_id. Persists for the lifetime of the container.
+document_store: dict[str, str] = {}
 
 # ── FastAPI App ─────────────────────────────────────────────────────────
 
@@ -169,6 +173,44 @@ async def metrics_endpoint():
 async def traces_endpoint():
     from src.agent.core.observability import metrics
     return {"traces": metrics.recent_traces}
+
+
+MAX_PDF_SIZE = 500 * 1024  # 500 KB
+
+
+@app.post("/agent/upload")
+async def upload_document(file: UploadFile = File(...), thread_id: str = Form(...)):
+    """Upload a PDF document (max 500KB) for the session. Extracted text is stored for document_qa."""
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        return JSONResponse({"error": "Only PDF files are accepted."}, status_code=400)
+
+    content = await file.read()
+    if len(content) > MAX_PDF_SIZE:
+        return JSONResponse({"error": f"File too large ({len(content) // 1024}KB). Maximum is 500KB."}, status_code=400)
+
+    try:
+        import fitz  # pymupdf
+        doc = fitz.open(stream=content, filetype="pdf")
+        text_parts = []
+        for page in doc:
+            text_parts.append(page.get_text())
+        doc.close()
+        extracted = "\n".join(text_parts).strip()
+    except Exception as e:
+        return JSONResponse({"error": f"Failed to extract text from PDF: {str(e)}"}, status_code=400)
+
+    if not extracted:
+        return JSONResponse({"error": "No text could be extracted from the PDF."}, status_code=400)
+
+    document_store[thread_id] = extracted
+    logger.info(f"[UPLOAD] thread={thread_id} file={file.filename} chars={len(extracted)}")
+
+    return JSONResponse({
+        "status": "ok",
+        "filename": file.filename,
+        "chars_extracted": len(extracted),
+        "thread_id": thread_id,
+    })
 
 
 @app.post("/invocations")

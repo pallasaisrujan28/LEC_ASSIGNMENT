@@ -7,19 +7,51 @@ import { streamAgent } from '@/lib/sse';
 import { AgentEvent, AgentTurn } from '@/types/agent';
 import Sidebar from './Sidebar';
 import TurnView from './TurnView';
-import { Send } from 'lucide-react';
+import { Send, Paperclip } from 'lucide-react';
 
 export default function ChatInterface() {
   const [turns, setTurns] = useState<AgentTurn[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [threadId, setThreadId] = useState(() => 'thread_' + generateId());
   const [input, setInput] = useState('');
+  const [uploadedFile, setUploadedFile] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [turns]);
+
+  const handleFileUpload = useCallback(async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      alert('Only PDF files are accepted.');
+      return;
+    }
+    if (file.size > 500 * 1024) {
+      alert('File too large. Maximum size is 500KB.');
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('thread_id', threadId);
+      const res = await fetch(`${apiUrl}/agent/upload`, { method: 'POST', body: formData });
+      const data = await res.json();
+      if (res.ok) {
+        setUploadedFile(file.name);
+      } else {
+        alert(data.error || 'Upload failed');
+      }
+    } catch {
+      alert('Upload failed. Please try again.');
+    } finally {
+      setIsUploading(false);
+    }
+  }, [threadId]);
 
   const appendEvent = useCallback((turnId: string, event: AgentEvent) => {
     setTurns((prev) =>
@@ -78,7 +110,7 @@ export default function ChatInterface() {
 
   const handleSubmit = (e: React.FormEvent) => { e.preventDefault(); sendMessage(input); };
   const handleKeyDown = (e: React.KeyboardEvent) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } };
-  const newConversation = () => { abortRef.current?.abort(); setTurns([]); setIsStreaming(false); setThreadId('thread_' + generateId()); };
+  const newConversation = () => { abortRef.current?.abort(); setTurns([]); setIsStreaming(false); setThreadId('thread_' + generateId()); setUploadedFile(null); };
 
   const hasMessages = turns.length > 0;
 
@@ -94,10 +126,24 @@ export default function ChatInterface() {
             </motion.h1>
             <motion.form initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} onSubmit={handleSubmit} className="w-full max-w-2xl">
               <div className="relative rounded-2xl border border-white/[0.08] bg-[#252520] shadow-lg">
-                <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="How can I help you today?" rows={2} className="w-full resize-none bg-transparent px-5 py-4 pr-14 text-[15px] text-[#e8e4dc] placeholder-[#5a5548] outline-none" />
-                <button type="submit" disabled={!input.trim() || isStreaming} className="absolute bottom-3 right-3 flex h-9 w-9 items-center justify-center rounded-lg bg-amber-600 text-white transition-all hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed">
-                  <Send size={16} />
-                </button>
+                {uploadedFile && (
+                  <div className="flex items-center gap-2 px-5 pt-3">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-600/20 px-3 py-1 text-xs text-amber-400">
+                      <Paperclip size={12} /> {uploadedFile}
+                      <button type="button" onClick={() => setUploadedFile(null)} className="ml-1 hover:text-white">&times;</button>
+                    </span>
+                  </div>
+                )}
+                <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="How can I help you today?" rows={2} className="w-full resize-none bg-transparent px-5 py-4 pr-24 text-[15px] text-[#e8e4dc] placeholder-[#5a5548] outline-none" />
+                <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                  <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ''; }} />
+                  <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex h-9 w-9 items-center justify-center rounded-lg text-[#5a5548] transition-all hover:bg-white/[0.05] hover:text-[#e8e4dc] disabled:opacity-30" title="Upload PDF (max 500KB)">
+                    <Paperclip size={16} />
+                  </button>
+                  <button type="submit" disabled={!input.trim() || isStreaming} className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-600 text-white transition-all hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed">
+                    <Send size={16} />
+                  </button>
+                </div>
               </div>
             </motion.form>
           </div>
@@ -126,10 +172,23 @@ export default function ChatInterface() {
             <div className="border-t border-white/[0.04] px-6 py-4">
               <form onSubmit={handleSubmit} className="mx-auto max-w-3xl">
                 <div className="relative rounded-2xl border border-white/[0.08] bg-[#252520]">
-                  <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Ask a follow-up question..." rows={1} className="w-full resize-none bg-transparent px-5 py-3 pr-14 text-[15px] text-[#e8e4dc] placeholder-[#5a5548] outline-none" />
-                  <button type="submit" disabled={!input.trim() || isStreaming} className="absolute bottom-2 right-3 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-600 text-white transition-all hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed">
-                    <Send size={14} />
-                  </button>
+                  {uploadedFile && (
+                    <div className="flex items-center gap-2 px-5 pt-3">
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-600/20 px-3 py-1 text-xs text-amber-400">
+                        <Paperclip size={12} /> {uploadedFile}
+                        <button type="button" onClick={() => setUploadedFile(null)} className="ml-1 hover:text-white">&times;</button>
+                      </span>
+                    </div>
+                  )}
+                  <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="Ask a follow-up question..." rows={1} className="w-full resize-none bg-transparent px-5 py-3 pr-24 text-[15px] text-[#e8e4dc] placeholder-[#5a5548] outline-none" />
+                  <div className="absolute bottom-2 right-3 flex items-center gap-2">
+                    <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex h-8 w-8 items-center justify-center rounded-lg text-[#5a5548] transition-all hover:bg-white/[0.05] hover:text-[#e8e4dc] disabled:opacity-30" title="Upload PDF (max 500KB)">
+                      <Paperclip size={14} />
+                    </button>
+                    <button type="submit" disabled={!input.trim() || isStreaming} className="flex h-8 w-8 items-center justify-center rounded-lg bg-amber-600 text-white transition-all hover:bg-amber-500 disabled:opacity-30 disabled:cursor-not-allowed">
+                      <Send size={14} />
+                    </button>
+                  </div>
                 </div>
               </form>
             </div>

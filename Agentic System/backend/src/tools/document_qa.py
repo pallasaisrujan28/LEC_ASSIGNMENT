@@ -1,67 +1,84 @@
-"""Document Q&A tool — retrieves relevant passages from user-provided text.
+"""Document Q&A tool — retrieves relevant passages from user provided text or uploaded PDFs.
 
 Chunks the document, finds the most relevant passages to the question
-using simple keyword/semantic matching, and returns them. The reflector
-node (main LLM) generates the final answer from these passages.
+using keyword matching, and returns them. The reflector node (main LLM)
+generates the final answer from these passages.
+
+If no document_text is provided, checks the session document store
+for previously uploaded PDF content.
 """
+
+import re
 
 from langchain_core.tools import tool
 
 
-@tool
-def document_qa(question: str, document_text: str) -> list[dict]:
-    """Find relevant passages in the provided document text that answer the question.
+def _get_document_store() -> dict:
+    """Get the document store from the API module."""
+    try:
+        from src.api.app import document_store
+        return document_store
+    except ImportError:
+        return {}
 
-    Chunks the document and returns the most relevant passages.
-    Use when the user provides text content and asks questions about it.
-    The agent's reflector will synthesize the final answer from these passages.
-    """
-    if not document_text or not document_text.strip():
-        return [{"passage": "No document text provided.", "relevance": 0}]
 
-    # Chunk the document into paragraphs
-    paragraphs = [p.strip() for p in document_text.split("\n") if p.strip() and len(p.strip()) > 20]
+def _chunk_and_search(text: str, question: str, max_results: int = 5) -> list[dict]:
+    """Chunk text and return most relevant passages for the question."""
+    paragraphs = [p.strip() for p in text.split("\n") if p.strip() and len(p.strip()) > 20]
 
-    # If no paragraphs, try splitting by sentences
     if not paragraphs:
-        import re
-        sentences = re.split(r'(?<=[.!?])\s+', document_text.strip())
-        # Group sentences into chunks of ~3
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         paragraphs = []
         for i in range(0, len(sentences), 3):
-            chunk = " ".join(sentences[i:i+3])
+            chunk = " ".join(sentences[i:i + 3])
             if len(chunk) > 20:
                 paragraphs.append(chunk)
 
     if not paragraphs:
-        return [{"passage": document_text[:500], "relevance": 1}]
+        return [{"passage": text[:500], "relevance": 1}]
 
-    # Score each paragraph by keyword overlap with the question
     question_words = set(question.lower().split())
-    # Remove common stop words
-    stop_words = {"what", "is", "the", "a", "an", "of", "in", "to", "and", "or", "how", "does", "do", "it", "this", "that", "for", "on", "with", "about"}
+    stop_words = {"what", "is", "the", "a", "an", "of", "in", "to", "and", "or",
+                  "how", "does", "do", "it", "this", "that", "for", "on", "with", "about"}
     question_keywords = question_words - stop_words
 
     scored = []
     for p in paragraphs:
         p_lower = p.lower()
-        # Count keyword matches
         matches = sum(1 for w in question_keywords if w in p_lower)
         scored.append((matches, p))
 
-    # Sort by relevance (most matches first), take top 5
     scored.sort(key=lambda x: x[0], reverse=True)
-    top = scored[:5]
+    top = scored[:max_results]
 
-    results = []
-    for score, passage in top:
-        results.append({
-            "passage": passage[:1000],  # Cap passage length
-            "relevance": score,
-        })
+    results = [{"passage": passage[:1000], "relevance": score} for score, passage in top]
 
-    # If no keyword matches at all, return first few paragraphs as context
     if all(r["relevance"] == 0 for r in results):
         results = [{"passage": p[:1000], "relevance": 1} for p in paragraphs[:3]]
 
     return results
+
+
+@tool
+def document_qa(question: str, document_text: str = "", thread_id: str = "") -> list[dict]:
+    """Find relevant passages in a document that answer the question.
+
+    If document_text is provided, searches that text directly.
+    If not, checks for a previously uploaded PDF in the session.
+    Use when the user asks questions about uploaded documents or provided text.
+    """
+    text = document_text.strip() if document_text else ""
+
+    if not text and thread_id:
+        store = _get_document_store()
+        text = store.get(thread_id, "")
+
+    if not text:
+        store = _get_document_store()
+        if store:
+            text = list(store.values())[-1]
+
+    if not text:
+        return [{"passage": "No document available. Please upload a PDF or provide document text.", "relevance": 0}]
+
+    return _chunk_and_search(text, question)
