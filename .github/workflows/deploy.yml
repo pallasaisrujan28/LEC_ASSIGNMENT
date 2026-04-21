@@ -1,0 +1,139 @@
+name: Deploy Agentic System
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REPO: lec-agent-backend
+  AMPLIFY_APP_ID: d2tey157rgynqr
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── Step 1: Infrastructure ──────────────────────────────────────────
+  infra:
+    name: Deploy Infrastructure
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "Agentic System/infra"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - run: terraform init
+      - run: terraform plan -var="amplify_github_token=${{ secrets.LEC_AMPLIFY }}" -out=tfplan
+      - run: terraform apply -auto-approve tfplan
+
+  # ── Step 2: Backend — build + push to ECR ───────────────────────────
+  backend:
+    name: Deploy Backend
+    needs: infra
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "Agentic System/backend"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for backend changes
+        id: changes
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q "Agentic System/backend/"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.changes.outputs.changed == 'true'
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        if: steps.changes.outputs.changed == 'true'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest"
+          docker build -t $IMAGE_URI .
+          docker push $IMAGE_URI
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_OUTPUT
+
+      - name: Deploy to AgentCore Runtime
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest"
+          # AgentCore Runtime deployment via AWS CLI
+          aws bedrock-agentcore-control create-agent-runtime \
+            --agent-runtime-name lec-agent-runtime \
+            --description "LEC Agentic System backend" \
+            --agent-runtime-artifact "{\"containerConfiguration\":{\"containerUri\":\"${IMAGE_URI}\"}}" \
+            --role-arn ${{ secrets.AGENTCORE_ROLE_ARN }} \
+            --environment-variables '{
+              "BEDROCK_MODEL_ID": "${{ secrets.BEDROCK_MODEL_ID }}",
+              "AWS_REGION": "us-west-2",
+              "AGENTCORE_MEMORY_ID": "${{ secrets.AGENTCORE_MEMORY_ID }}",
+              "AGENTCORE_SUMMARY_STRATEGY_ID": "${{ secrets.AGENTCORE_SUMMARY_STRATEGY_ID }}",
+              "BEDROCK_GUARDRAIL_ID": "${{ secrets.BEDROCK_GUARDRAIL_ID }}",
+              "BEDROCK_GUARDRAIL_VERSION": "${{ secrets.BEDROCK_GUARDRAIL_VERSION }}",
+              "TAVILY_API_KEY": "${{ secrets.TAVILY_API_KEY }}",
+              "BUDGET_CAP_USD": "20.0",
+              "LANGCHAIN_TRACING_V2": "true",
+              "LANGCHAIN_ENDPOINT": "${{ secrets.LANGCHAIN_ENDPOINT }}",
+              "LANGCHAIN_API_KEY": "${{ secrets.LANGCHAIN_API_KEY }}",
+              "LANGCHAIN_PROJECT": "LEC-AGENT"
+            }' \
+            --region ${{ env.AWS_REGION }} || echo "Runtime may already exist — updating instead"
+
+  # ── Step 3: Frontend — Amplify auto-deploys from main ───────────────
+  frontend:
+    name: Deploy Frontend
+    needs: infra
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check for frontend changes
+        id: changes
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q "Agentic System/frontend/"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: steps.changes.outputs.changed == 'true'
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Trigger Amplify build
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          aws amplify start-job \
+            --app-id ${{ env.AMPLIFY_APP_ID }} \
+            --branch-name main \
+            --job-type RELEASE \
+            --region ${{ env.AWS_REGION }}

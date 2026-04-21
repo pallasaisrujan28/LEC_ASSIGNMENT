@@ -277,6 +277,53 @@ resource "aws_iam_role_policy" "github_actions_policy" {
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 6. IAM Role for AgentCore Runtime — allows the agent to call Bedrock
+# ══════════════════════════════════════════════════════════════════════════
+
+resource "aws_iam_role" "agentcore_runtime" {
+  name = "${var.project_name}-agentcore-runtime"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Service = "bedrock-agentcore.amazonaws.com"
+        }
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "agentcore_runtime_policy" {
+  name = "${var.project_name}-agentcore-runtime-policy"
+  role = aws_iam_role.agentcore_runtime.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream",
+          "bedrock-agentcore:*",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:GetAuthorizationToken",
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# ══════════════════════════════════════════════════════════════════════════
 # Outputs
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -306,4 +353,8 @@ output "amplify_default_domain" {
 
 output "github_actions_role_arn" {
   value = aws_iam_role.github_actions.arn
+}
+
+output "agentcore_runtime_role_arn" {
+  value = aws_iam_role.agentcore_runtime.arn
 }
