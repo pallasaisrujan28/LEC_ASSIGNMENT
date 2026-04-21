@@ -7,7 +7,7 @@ Build a production grade AI agent that orchestrates 5 or more tools to answer mu
 ## Assumptions
 
 1. The agent operates in a stateless request/response model where each query triggers a fresh planning cycle, but conversation memory persists across turns via AgentCore Memory checkpointing.
-2. Have setup infrastructure on AWS , using Claude Sonnet 4.6 via AWS Bedrock
+2. Have setup infrastructure on AWS and for this project using Claude Sonnet 4.6 via AWS Bedrock
 4. Tool responses are treated as untrusted input. The reflector synthesises answers from tool results rather than passing raw output to the user.
 5. According to the requirements I have created a hard budget limit of 20$ which when hit will notify the user.
 

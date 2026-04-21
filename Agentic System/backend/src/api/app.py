@@ -264,6 +264,11 @@ async def stream_endpoint(request: Request):
     thread_id = body.get("thread_id", f"s-{uuid.uuid4().hex[:8]}")
     budget_limit = float(body.get("budget_limit", BUDGET_CAP))
 
+    # If there's an uploaded document for this thread, hint the planner
+    doc_text = document_store.get(thread_id, "")
+    if doc_text and "document_qa" not in query.lower():
+        query = f"[A PDF document has been uploaded for this session. Use the document_qa tool with the question to search it. The document text is already stored in the session.]\n\n{query}"
+
     async def generate():
         try:
             _, blocked = apply_bedrock_guardrail(query, "INPUT")
