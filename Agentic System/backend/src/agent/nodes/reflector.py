@@ -32,6 +32,7 @@ CRITICAL RULES FOR YOUR FINAL ANSWER:
 - If a tool returned noisy/irrelevant data, extract only the relevant parts.
 - If some tools failed but you have enough info from others, still provide an answer.
 - Only request a re-plan if critical information is missing.
+- NEVER do math or calculations yourself. If a calculation is needed and the calculator tool was not used, request a RE-PLAN asking for a calculator step.
 """
 
 
