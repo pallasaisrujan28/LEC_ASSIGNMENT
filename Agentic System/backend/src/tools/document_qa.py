@@ -16,10 +16,10 @@ from langchain_core.tools import tool
 def _get_document_store() -> dict:
     """Get the document store from the API module."""
     try:
-        from src.api.app import document_store
-        return document_store
+        from src.api.app import document_store, doc_store_get
+        return document_store, doc_store_get
     except ImportError:
-        return {}
+        return {}, lambda x: ""
 
 
 def _chunk_and_search(text: str, question: str, max_results: int = 5) -> list[dict]:
@@ -70,11 +70,13 @@ def document_qa(question: str, document_text: str = "", thread_id: str = "") -> 
     text = document_text.strip() if document_text else ""
 
     if not text and thread_id:
-        store = _get_document_store()
-        text = store.get(thread_id, "")
+        _, get_fn = _get_document_store()
+        text = get_fn(thread_id)
 
     if not text:
-        store = _get_document_store()
+        _, get_fn = _get_document_store()
+        # Try any recent document
+        store, _ = _get_document_store()
         if store:
             text = list(store.values())[-1]
 

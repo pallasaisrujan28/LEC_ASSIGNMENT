@@ -141,16 +141,13 @@ All infrastructure is managed via Terraform with state stored in S3. The CI/CD p
 
 **Cold start latency**: The biggest throughput bottleneck is the initial LLM call to the planner. Each planning call takes 2 to 5 seconds depending on query complexity. For high throughput scenarios, pre warming the Bedrock connection and implementing plan caching for common query patterns would significantly reduce p50 latency.
 
-## What I Would Ship Next With One More Week
+**Multi file document injection and querying**: The current document Q&A tool supports a single PDF per session. Extending this to accept multiple files, maintain a per session document index, and allow the user to query across all uploaded documents simultaneously would make the tool significantly more useful for research and analysis workflows.
 
+**Tool result caching with TTL**: Web search and Wikipedia results for the same query should be cached with a configurable TTL. This would reduce API calls, lower costs, and improve response times for repeated or similar queries.
 
-1. **Tool result caching with TTL**: Web search and Wikipedia results for the same query should be cached with a configurable TTL. This would reduce API calls, lower costs, and improve response times for repeated or similar queries.
+**Adaptive re planning with error context**: Instead of the reflector simply saying "re plan", it would provide structured feedback about what went wrong and what alternative approach to try. This would reduce the number of wasted re planning iterations.
 
-2. **Adaptive re planning with error context**: Instead of the reflector simply saying "re plan", it would provide structured feedback about what went wrong and what alternative approach to try. This would reduce the number of wasted re planning iterations.
-
-3. **Multi modal document Q&A**: Extend the document_qa tool to accept PDF and image uploads via the frontend, process them with Bedrock's multi modal capabilities, and answer questions about visual content.
-
-4. **Evaluation dashboard**: Build a lightweight dashboard that visualises evaluation results over time, showing success rate trends, common failure patterns, and cost per query distributions. This would make prompt iteration and system improvement data driven.
+**Evaluation dashboard**: Build a lightweight dashboard that visualises evaluation results over time, showing success rate trends, common failure patterns, and cost per query distributions. This would make prompt iteration and system improvement data driven.
 
 ## AI Usage Note
 
@@ -162,6 +159,5 @@ I have used AI assistance in the following areas:
 
 **Tool implementations**: I used AI to build the tool code. The tools are straightforward API wrappers (Tavily, sympy, wikipedia-api, Bedrock Retrieve), so I had AI generate the initial implementations and then tested each one individually by running multiple automated tests to verify correctness.
 
-**Infrastructure**: I used AI to help write the Terraform configuration and GitHub Actions pipeline. I provided the architecture requirements (ECS Fargate, ALB, auto scaling, CloudFront) and iterated on the configuration until all resources deployed successfully.
 
 All AI generated code was reviewed, tested, and modified as needed. The architectural decisions, prompt engineering, evaluation criteria, and system design were my own.

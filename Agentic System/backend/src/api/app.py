@@ -50,7 +50,32 @@ from src.agent.core.guardrails import (
 from src.agent.core.memory import maybe_summarize
 
 # ── Document store (session → extracted PDF text) ───────────────────────
-# In-memory store keyed by thread_id. Persists for the lifetime of the container.
+# File-based store so all uvicorn workers share the same data
+import tempfile
+
+_DOC_STORE_DIR = os.path.join(tempfile.gettempdir(), "lec_doc_store")
+os.makedirs(_DOC_STORE_DIR, exist_ok=True)
+
+
+def _doc_store_path(thread_id: str) -> str:
+    safe_id = thread_id.replace("/", "_").replace("..", "_")
+    return os.path.join(_DOC_STORE_DIR, f"{safe_id}.txt")
+
+
+def doc_store_set(thread_id: str, text: str):
+    with open(_doc_store_path(thread_id), "w") as f:
+        f.write(text)
+
+
+def doc_store_get(thread_id: str) -> str:
+    path = _doc_store_path(thread_id)
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return f.read()
+    return ""
+
+
+# Keep backward compat dict for document_qa tool
 document_store: dict[str, str] = {}
 
 # ── FastAPI App ─────────────────────────────────────────────────────────
@@ -203,6 +228,7 @@ async def upload_document(file: UploadFile = File(...), thread_id: str = Form(..
         return JSONResponse({"error": "No text could be extracted from the PDF."}, status_code=400)
 
     document_store[thread_id] = extracted
+    doc_store_set(thread_id, extracted)
     logger.info(f"[UPLOAD] thread={thread_id} file={file.filename} chars={len(extracted)}")
 
     return JSONResponse({
@@ -264,10 +290,12 @@ async def stream_endpoint(request: Request):
     thread_id = body.get("thread_id", f"s-{uuid.uuid4().hex[:8]}")
     budget_limit = float(body.get("budget_limit", BUDGET_CAP))
 
-    # If there's an uploaded document for this thread, hint the planner
-    doc_text = document_store.get(thread_id, "")
+    # If there's an uploaded document for this thread, inject the text directly
+    doc_text = doc_store_get(thread_id)
     if doc_text and "document_qa" not in query.lower():
-        query = f"[A PDF document has been uploaded for this session. Use the document_qa tool with the question to search it. The document text is already stored in the session.]\n\n{query}"
+        # Truncate to avoid token limits
+        truncated = doc_text[:8000] if len(doc_text) > 8000 else doc_text
+        query = f"[UPLOADED DOCUMENT CONTENT]\n{truncated}\n[END OF DOCUMENT]\n\nUser question: {query}"
 
     async def generate():
         try:
