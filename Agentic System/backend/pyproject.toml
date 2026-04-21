@@ -29,6 +29,7 @@ dependencies = [
     "pyyaml",
     "aiobotocore>=3.4.0",
     "tavily-python>=0.7.23",
+    "langsmith>=0.7.32",
 ]
 
 [project.optional-dependencies]

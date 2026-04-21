@@ -64,6 +64,20 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/metrics")
+def get_metrics():
+    """Return aggregate metrics for monitoring."""
+    from src.agent.core.observability import metrics
+    return metrics.get_summary()
+
+
+@app.get("/traces")
+def get_traces():
+    """Return recent request traces for debugging."""
+    from src.agent.core.observability import metrics
+    return {"traces": metrics.recent_traces}
+
+
 @app.post("/agent/query", response_model=QueryResponse)
 def agent_query(request: QueryRequest):
     try:
@@ -113,8 +127,15 @@ def agent_stream(request: QueryRequest):
         try:
             # Check input with Bedrock guardrail
             from src.agent.core.guardrails import apply_bedrock_guardrail
+            from src.agent.core.observability import Trace, Span, metrics as metrics_store
+
+            trace = Trace()
+            trace.start(request.query, thread_id)
+
             _, blocked = apply_bedrock_guardrail(request.query, "INPUT")
             if blocked:
+                trace.end(error="Blocked by input guardrail")
+                metrics_store.record(trace)
                 yield _sse_event("answer", {"final_answer": "Your request was blocked by our safety filters. Please rephrase your question."})
                 yield _sse_event("done", {"status": "complete"})
                 return
@@ -152,8 +173,12 @@ def agent_stream(request: QueryRequest):
             last_answer = None
             for event in graph.stream(initial_state, config=config, stream_mode="updates"):
                 for node_name, state_update in event.items():
+                    span = Span(name=node_name).start()
+
                     if node_name == "planner" and state_update.get("plan"):
                         plan = state_update["plan"]
+                        span.end(metadata={"steps": len(plan.steps)})
+                        trace.add_span(span)
                         yield _sse_event("planning", {
                             "thought": plan.thought,
                             "steps": [
@@ -170,6 +195,10 @@ def agent_stream(request: QueryRequest):
 
                     elif node_name == "executor":
                         observations = state_update.get("observations", [])
+                        tools = [o.tool for o in observations]
+                        span.end(metadata={"tools": tools})
+                        trace.add_span(span)
+                        trace.tools_called.extend(tools)
                         for obs in observations:
                             yield _sse_event("tool_result", {
                                 "step_id": obs.step_id,
@@ -181,10 +210,11 @@ def agent_stream(request: QueryRequest):
 
                     elif node_name == "reflector":
                         if state_update.get("final_answer"):
-                            # Apply output guardrail on final answer
                             answer = state_update["final_answer"]
                             checked_answer, was_blocked = apply_bedrock_guardrail(answer, "OUTPUT")
                             last_answer = checked_answer if not was_blocked else answer
+                            span.end(metadata={"is_done": True})
+                            trace.add_span(span)
                             yield _sse_event("answer", {
                                 "final_answer": last_answer,
                             })
@@ -206,9 +236,19 @@ def agent_stream(request: QueryRequest):
                 except Exception:
                     pass
 
+            # Record trace
+            budget_data = None
+            # Get budget from last event if available
+            trace.end(budget=budget_data)
+            metrics_store.record(trace)
+
+            # Send trace info as final event
+            yield _sse_event("trace", {"request_id": trace.request_id, "duration_ms": trace.total_duration_ms})
             yield _sse_event("done", {"status": "complete"})
 
         except Exception as e:
+            trace.end(error=str(e))
+            metrics_store.record(trace)
             yield _sse_event("error", {"message": str(e)})
 
     return StreamingResponse(
