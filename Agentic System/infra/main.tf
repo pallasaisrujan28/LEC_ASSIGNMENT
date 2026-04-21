@@ -266,8 +266,9 @@ resource "aws_iam_role_policy" "github_actions_policy" {
           "bedrock-agentcore:*",
           "amplify:*",
           "cloudformation:*",
-          "iam:PassRole",
+          "iam:*",
           "s3:*",
+          "sts:GetCallerIdentity",
         ]
         Resource = "*"
       }
