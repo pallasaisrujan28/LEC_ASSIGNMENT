@@ -128,6 +128,14 @@ def planner_node(state: AgentState) -> dict:
     if plan is None:
         plan = Plan(thought="Request was blocked by safety guardrails.", steps=[])
 
+    # Tool abuse prevention guardrail
+    from src.agent.core.guardrails import validate_plan
+    try:
+        validate_plan(plan)
+    except Exception as e:
+        logger.warning(f"[PLANNER] Plan rejected by guardrail: {e}")
+        plan = Plan(thought=str(e), steps=[])
+
     logger.info(f"[PLANNER] Plan thought: {plan.thought}")
     for step in plan.steps:
         logger.info(f"[PLANNER] Step {step.step_id}: tool={step.tool}, args={step.args}, depends_on={step.depends_on}")

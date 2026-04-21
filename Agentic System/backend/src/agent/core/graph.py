@@ -158,11 +158,18 @@ def run_agent(query: str, budget_usd: float = 20.0, thread_id: str = "default") 
             "error": o.error,
         })
 
+    # Apply output guardrails
+    from src.agent.core.guardrails import sanitize_output, check_grounding
+
+    raw_answer = result.get("final_answer", "Agent could not produce an answer.")
+    clean_answer = sanitize_output(raw_answer)
+    clean_answer = check_grounding(clean_answer, result.get("observations", []))
+
     return {
         "query": query,
         "plan": plan_output,
         "observations": observations_output,
-        "final_answer": result.get("final_answer", "Agent could not produce an answer."),
+        "final_answer": clean_answer,
         "reflections": result.get("reflections", []),
         "iterations": result.get("iteration", 0),
         "budget": result["budget"].model_dump() if hasattr(result.get("budget"), "model_dump") else {},

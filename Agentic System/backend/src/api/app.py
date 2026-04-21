@@ -67,6 +67,8 @@ def health():
 @app.post("/agent/query", response_model=QueryResponse)
 def agent_query(request: QueryRequest):
     try:
+        from src.agent.core.guardrails import validate_input
+        query = validate_input(request.query)
         thread_id = request.thread_id or f"q-{uuid.uuid4().hex[:8]}"
         result = run_agent(
             query=request.query,
