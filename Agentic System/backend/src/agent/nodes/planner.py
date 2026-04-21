@@ -63,13 +63,23 @@ Only include steps that still need to be done. Do NOT repeat completed steps.
 
 
 def _get_llm():
-    """Get the Bedrock LLM."""
+    """Get the Bedrock LLM with guardrails."""
     import os
 
-    return ChatBedrockConverse(
-        model=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
-        region_name=os.environ.get("AWS_REGION", "us-west-2"),
-    )
+    guardrail_id = os.environ.get("BEDROCK_GUARDRAIL_ID")
+    guardrail_version = os.environ.get("BEDROCK_GUARDRAIL_VERSION")
+
+    kwargs = {
+        "model": os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
+        "region_name": os.environ.get("AWS_REGION", "us-west-2"),
+    }
+    if guardrail_id and guardrail_version:
+        kwargs["guardrail_config"] = {
+            "guardrailIdentifier": guardrail_id,
+            "guardrailVersion": guardrail_version,
+        }
+
+    return ChatBedrockConverse(**kwargs)
 
 
 def planner_node(state: AgentState) -> dict:
@@ -113,6 +123,10 @@ def planner_node(state: AgentState) -> dict:
     # Get structured plan from LLM
     structured_llm = llm.with_structured_output(Plan)
     plan = structured_llm.invoke(messages)
+
+    # Handle guardrail block — structured output returns None when blocked
+    if plan is None:
+        plan = Plan(thought="Request was blocked by safety guardrails.", steps=[])
 
     logger.info(f"[PLANNER] Plan thought: {plan.thought}")
     for step in plan.steps:

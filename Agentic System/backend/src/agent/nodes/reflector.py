@@ -50,10 +50,22 @@ class ReflectionResult(BaseModel):
 
 
 def _get_llm():
-    return ChatBedrockConverse(
-        model=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
-        region_name=os.environ.get("AWS_REGION", "us-west-2"),
-    )
+    import os
+
+    guardrail_id = os.environ.get("BEDROCK_GUARDRAIL_ID")
+    guardrail_version = os.environ.get("BEDROCK_GUARDRAIL_VERSION")
+
+    kwargs = {
+        "model": os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
+        "region_name": os.environ.get("AWS_REGION", "us-west-2"),
+    }
+    if guardrail_id and guardrail_version:
+        kwargs["guardrail_config"] = {
+            "guardrailIdentifier": guardrail_id,
+            "guardrailVersion": guardrail_version,
+        }
+
+    return ChatBedrockConverse(**kwargs)
 
 
 def reflector_node(state: AgentState) -> dict:
@@ -100,6 +112,13 @@ def reflector_node(state: AgentState) -> dict:
 
     structured_llm = llm.with_structured_output(ReflectionResult)
     result = structured_llm.invoke(messages)
+
+    # Handle guardrail block
+    if result is None:
+        result = ReflectionResult(
+            is_done=True,
+            final_answer="Your request was blocked by our safety filters. Please rephrase your question.",
+        )
 
     logger.info(f"[REFLECTOR] is_done={result.is_done}, answer={str(result.final_answer)[:100] if result.final_answer else 'None'}")
     if result.feedback:
