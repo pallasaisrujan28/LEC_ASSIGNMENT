@@ -34,7 +34,7 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
 
       - run: terraform init
-      - run: terraform plan -var="amplify_github_token=${{ secrets.LEC_AMPLIFY }}" -out=tfplan
+      - run: terraform plan -out=tfplan
       - run: terraform apply -auto-approve tfplan
 
   # ── Step 2: Backend — build + push to ECR ───────────────────────────
