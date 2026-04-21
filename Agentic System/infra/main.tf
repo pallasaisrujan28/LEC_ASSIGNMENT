@@ -5,6 +5,12 @@ terraform {
       version = "~> 5.0"
     }
   }
+
+  backend "s3" {
+    bucket = "lec-agent-tfstate"
+    key    = "agentic-system/terraform.tfstate"
+    region = "us-west-2"
+  }
 }
 
 provider "aws" {
@@ -15,13 +21,44 @@ variable "aws_region" {
   default = "us-west-2"
 }
 
+variable "project_name" {
+  default = "lec-agent"
+}
+
+variable "github_repo" {
+  default = "pallasaisrujan28/LEC_ASSIGNMENT"
+}
+
+variable "amplify_github_token" {
+  description = "GitHub personal access token for Amplify"
+  type        = string
+  sensitive   = true
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 1. ECR Repository — stores the backend Docker image
+# ══════════════════════════════════════════════════════════════════════════
+
+resource "aws_ecr_repository" "backend" {
+  name                 = "${var.project_name}-backend"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2. Bedrock Guardrail
+# ══════════════════════════════════════════════════════════════════════════
+
 resource "aws_bedrock_guardrail" "agent_guardrail" {
-  name                      = "lec-agent-guardrail"
+  name                      = "${var.project_name}-guardrail-v2"
   description               = "Guardrails for the LEC Agentic System"
   blocked_input_messaging   = "Your request was blocked by our safety filters. Please rephrase your question."
   blocked_outputs_messaging = "The response was filtered for safety. Please try a different question."
 
-  # 1. Content filtering — block hate, violence, sexual, insults, misconduct, prompt attacks
   content_policy_config {
     filters_config {
       type            = "HATE"
@@ -55,37 +92,27 @@ resource "aws_bedrock_guardrail" "agent_guardrail" {
     }
   }
 
-  # 2. Denied topics — block illegal activities, weapons, self-harm
   topic_policy_config {
     topics_config {
       name       = "illegal_activities"
-      definition = "Queries about performing illegal activities, creating weapons, hacking, drug manufacturing, or causing harm to others."
+      definition = "Queries about performing illegal activities, creating weapons, hacking, or causing harm."
       type       = "DENY"
-      examples   = [
-        "How do I hack into someone's account?",
-        "How to make explosives at home",
-        "How to bypass security systems",
-      ]
+      examples   = ["How do I hack into someone's account?", "How to make explosives"]
     }
     topics_config {
       name       = "self_harm"
-      definition = "Content that encourages, instructs, or provides information about self-harm or suicide."
+      definition = "Content that encourages self-harm or suicide."
       type       = "DENY"
-      examples   = [
-        "How to hurt myself",
-        "Methods of self-harm",
-      ]
+      examples   = ["How to hurt myself"]
     }
   }
 
-  # 3. Word filters — block profanity
   word_policy_config {
     managed_word_lists_config {
       type = "PROFANITY"
     }
   }
 
-  # 4. Sensitive information filters — auto-redact PII
   sensitive_information_policy_config {
     pii_entities_config {
       type   = "EMAIL"
@@ -104,15 +131,157 @@ resource "aws_bedrock_guardrail" "agent_guardrail" {
       action = "BLOCK"
     }
   }
-
-  # 5. Grounding check — handled at code level in guardrails.py
-  # Removed from Bedrock guardrail because it conflicts with structured output
-  # (planner/reflector use with_structured_output which has no grounding source)
 }
 
-resource "aws_bedrock_guardrail_version" "v1" {
+resource "aws_bedrock_guardrail_version" "current" {
   guardrail_arn = aws_bedrock_guardrail.agent_guardrail.guardrail_arn
-  description   = "v2 - removed grounding check"
+  description   = "current"
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3. AgentCore Memory (via CloudFormation — no native terraform resource yet)
+# ══════════════════════════════════════════════════════════════════════════
+
+resource "aws_cloudformation_stack" "agentcore_memory" {
+  name = "${var.project_name}-memory"
+
+  template_body = jsonencode({
+    AWSTemplateFormatVersion = "2010-09-09"
+    Resources = {
+      AgentMemory = {
+        Type = "AWS::BedrockAgentCore::Memory"
+        Properties = {
+          Name                = "lec_agent_memory"
+          Description         = "Conversation memory for the LEC agent"
+          EventExpiryDuration = 30
+          MemoryStrategies = [
+            {
+              SummaryMemoryStrategy = {
+                Name               = "SessionSummarizer"
+                NamespaceTemplates = ["/summaries/{actorId}/{sessionId}/"]
+              }
+            }
+          ]
+        }
+      }
+    }
+    Outputs = {
+      MemoryId = {
+        Value = { "Ref" = "AgentMemory" }
+      }
+    }
+  })
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 4. Amplify App — hosts the Next.js frontend
+# ══════════════════════════════════════════════════════════════════════════
+
+resource "aws_amplify_app" "frontend" {
+  name         = "${var.project_name}-frontend"
+  repository   = "https://github.com/${var.github_repo}"
+  access_token = var.amplify_github_token
+
+  build_spec = <<-EOT
+    version: 1
+    applications:
+      - frontend:
+          phases:
+            preBuild:
+              commands:
+                - cd "Agentic System/frontend"
+                - npm ci
+            build:
+              commands:
+                - npm run build
+          artifacts:
+            baseDirectory: "Agentic System/frontend/.next"
+            files:
+              - '**/*'
+          cache:
+            paths:
+              - "Agentic System/frontend/node_modules/**/*"
+        appRoot: "Agentic System/frontend"
+  EOT
+
+  environment_variables = {
+    NEXT_PUBLIC_API_URL = "https://api.placeholder.com" # Updated after AgentCore Runtime deploy
+  }
+}
+
+resource "aws_amplify_branch" "main" {
+  app_id      = aws_amplify_app.frontend.id
+  branch_name = "main"
+  stage       = "PRODUCTION"
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 5. IAM Role — for GitHub Actions OIDC deployments
+# ══════════════════════════════════════════════════════════════════════════
+
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_openid_connect_provider" "github" {
+  url = "https://token.actions.githubusercontent.com"
+}
+
+resource "aws_iam_role" "github_actions" {
+  name = "${var.project_name}-github-actions"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = data.aws_iam_openid_connect_provider.github.arn
+        }
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+          }
+          StringLike = {
+            "token.actions.githubusercontent.com:sub" = "repo:${var.github_repo}:*"
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "github_actions_policy" {
+  name = "${var.project_name}-deploy-policy"
+  role = aws_iam_role.github_actions.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:*",
+          "bedrock:*",
+          "bedrock-agentcore:*",
+          "amplify:*",
+          "cloudformation:*",
+          "iam:PassRole",
+          "s3:*",
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Outputs
+# ══════════════════════════════════════════════════════════════════════════
+
+output "ecr_repository_url" {
+  value = aws_ecr_repository.backend.repository_url
 }
 
 output "guardrail_id" {
@@ -120,5 +289,21 @@ output "guardrail_id" {
 }
 
 output "guardrail_version" {
-  value = aws_bedrock_guardrail_version.v1.version
+  value = aws_bedrock_guardrail_version.current.version
+}
+
+output "agentcore_memory_id" {
+  value = aws_cloudformation_stack.agentcore_memory.outputs["MemoryId"]
+}
+
+output "amplify_app_id" {
+  value = aws_amplify_app.frontend.id
+}
+
+output "amplify_default_domain" {
+  value = aws_amplify_app.frontend.default_domain
+}
+
+output "github_actions_role_arn" {
+  value = aws_iam_role.github_actions.arn
 }
