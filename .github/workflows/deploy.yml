@@ -175,8 +175,6 @@ jobs:
 
       - name: Build frontend
         if: steps.changes.outputs.changed == 'true'
-        env:
-          NEXT_PUBLIC_API_URL: ${{ secrets.BACKEND_URL }}
         run: |
           npm ci
           npm run build

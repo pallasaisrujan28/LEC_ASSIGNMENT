@@ -1,4 +1,4 @@
-// SSE client — connects to the backend ALB for streaming agent responses
+// SSE client — connects to the backend via CloudFront proxy (same origin)
 export async function streamAgent(
   query: string,
   budgetLimit: number,
@@ -6,7 +6,7 @@ export async function streamAgent(
   onEvent: (eventType: string, data: unknown) => void,
   signal?: AbortSignal
 ): Promise<void> {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || '';
   const response = await fetch(`${apiUrl}/agent/stream`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
