@@ -10,4 +10,4 @@ COPY config.yaml .
 
 EXPOSE 8080
 
-CMD ["uv", "run", "uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "4"]
+CMD ["uv", "run", "python", "-m", "uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "4"]
