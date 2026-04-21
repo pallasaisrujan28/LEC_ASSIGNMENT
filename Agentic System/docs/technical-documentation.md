@@ -21,7 +21,7 @@ I have built 5 tool functions (covering the 5 required categories) using the Lan
 
 **wiki_summary and wiki_search(Chose this as my 5th tool)** uses the wikipedia-api library to retrieve Wikipedia article summaries and search for article titles. wiki_summary takes a topic name and returns a concise summary. wiki_search finds relevant article titles for a given query. These are used for factual, encyclopedic knowledge.
 
-**knowledge_base_lookup** uses the Bedrock Agent Runtime `Retrieve` API to search a pre built knowledge base backed by S3 Vectors. The knowledge base is created with a Titan Embed Text v2 embedding model (1024 dimensions) and an S3 Vector bucket as the vector store. Documents are ingested from an S3 bucket and the pipeline triggers a sync on every deployment. This tool is used for structured, indexed information about specific topics.
+**knowledge_base_lookup** uses the Bedrock Agent Runtime `Retrieve` API to search a pre built knowledge base backed by S3 Vectors. The knowledge base is created with a Titan Embed Text v2 embedding model (1024 dimensions) and an S3 Vector bucket as the vector store. I have ingested a document related to LEC industries.
 
 **document_qa** takes a question and user provided document text, chunks the text into paragraphs, scores each paragraph by keyword overlap with the question, and returns the most relevant passages. The reflector (main LLM) then generates the final answer from these passages.
 
@@ -65,7 +65,7 @@ I have implemented two layers of guardrails:
 
 **Bedrock Managed Guardrails** are configured via Terraform and applied at the API level using the `ApplyGuardrail` API. They include content filtering (hate, insults, sexual, violence, misconduct, prompt Injections), denied topics (illegal activities, self harm), word filters (profanity), and PII handling (email/phone anonymised, credit card/SSN blocked). The guardrail is applied on both input (before the agent runs) and output (after the final answer).
 
-**Custom Python Guardrails** run in the application code. Input validation rejects empty queries and queries exceeding 3000 characters(built to not execute the budget faster). Plan validation prevents plans with more than 8 steps, duplicate tool calls with identical arguments, and unknown tool names. Output sanitisation strips HTML/script tags, internal error traces, and system prompt leaks. A code level grounding check warns if the final answer does not reference any tool results.
+**Custom Python Guardrails** run in the application code. Input validation rejects empty queries and queries exceeding 3000 characters(built to not exhaust the budget faster because we have a budget based requirement). Plan validation prevents plans with more than 8 steps, duplicate tool calls with identical arguments, and unknown tool names. Output sanitisation strips HTML/script tags, internal error traces, and system prompt leaks. A code level grounding check warns if the final answer does not reference any tool results.
 
 ### Observability and Monitoring
 
@@ -131,15 +131,22 @@ The frontend is a Next.js application with a static export deployed to S3 and se
 
 ## Infrastructure and CI/CD
 
-All infrastructure is managed via Terraform with state stored in S3. The CI/CD pipeline runs on GitHub Actions with three parallel jobs after infrastructure: backend (Docker build, ECR push, ECS task definition registration, service update), frontend (Next.js build, S3 sync, CloudFront invalidation), and knowledge base sync (triggers Bedrock ingestion job). GitHub Actions authenticates to AWS via OIDC federation.
+All infrastructure is managed via Terraform with state stored in S3. The CI/CD pipeline runs on GitHub Actions with four jobs triggered on every push to main:
 
-## Improvements
+**Infra** runs Terraform init, plan, and apply to provision or update all AWS resources (VPC, ALB, ECS cluster, security groups, CloudFront, S3 buckets, IAM roles, Bedrock guardrails, AgentCore Memory, Knowledge Base).
+
+**Backend** checks for file changes in the backend directory. If changes are detected, it builds an ARM64 Docker image, pushes it to ECR, registers a new ECS task definition with all environment variables injected from GitHub Secrets, and triggers a rolling deployment on the ECS service.
+
+**Frontend** checks for file changes in the frontend directory. If changes are detected, it runs npm ci and npm run build, syncs the static export to S3, and invalidates the CloudFront cache.
+
+**Sync KB** triggers a Bedrock ingestion job to re index the knowledge base documents from S3 on every deployment(if there are any new docs).
+
+
+## Improvements and What I ship in next few weeks
 
 **Convert tools to MCP**: The current tools use the LangChain `@tool` decorator which couples them to this specific agent. Converting to Model Context Protocol (MCP) servers would make each tool independently deployable and reusable across different agents if we want to scale to multiple agents in future.
 
 **Tool specific planning rules**: The agent planning loop currently treats all tools uniformly. Defining per tool constraints (e.g., "web_search should never be called more than 3 times per plan", "calculator must always follow a data retrieval step") would reduce wasted tool calls and improve plan quality.
-
-**Cold start latency**: The biggest throughput bottleneck is the initial LLM call to the planner. Each planning call takes 2 to 5 seconds depending on query complexity. For high throughput scenarios, pre warming the Bedrock connection and implementing plan caching for common query patterns would significantly reduce p50 latency.
 
 **Multi file document injection and querying**: The current document Q&A tool supports a single PDF per session. Extending this to accept multiple files, maintain a per session document index, and allow the user to query across all uploaded documents simultaneously would make the tool significantly more useful for research and analysis workflows.
 
@@ -147,7 +154,6 @@ All infrastructure is managed via Terraform with state stored in S3. The CI/CD p
 
 **Adaptive re planning with error context**: Instead of the reflector simply saying "re plan", it would provide structured feedback about what went wrong and what alternative approach to try. This would reduce the number of wasted re planning iterations.
 
-**Evaluation dashboard**: Build a lightweight dashboard that visualises evaluation results over time, showing success rate trends, common failure patterns, and cost per query distributions. This would make prompt iteration and system improvement data driven.
 
 ## AI Usage Note
 
@@ -158,6 +164,5 @@ I have used AI assistance in the following areas:
 **Evaluation tests**: I used AI to build the DeepEval test cases. I provided the input queries and expected outputs, and asked it to create test cases using those scenarios with the appropriate metrics and thresholds.
 
 **Tool implementations**: I used AI to build the tool code. The tools are straightforward API wrappers (Tavily, sympy, wikipedia-api, Bedrock Retrieve), so I had AI generate the initial implementations and then tested each one individually by running multiple automated tests to verify correctness.
-
 
 All AI generated code was reviewed, tested, and modified as needed. The architectural decisions, prompt engineering, evaluation criteria, and system design were my own.
