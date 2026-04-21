@@ -1,4 +1,13 @@
-"""FastAPI application — POST /agent/query + POST /agent/stream endpoints."""
+"""FastAPI application — serves the Plan-and-Execute agent.
+
+Endpoints:
+  POST /invocations  — AgentCore-compatible invoke (JSON payload)
+  POST /agent/stream  — SSE streaming for the frontend
+  GET  /health        — Health check
+  GET  /ping          — Ping (ALB health check)
+  GET  /metrics       — Observability metrics
+  GET  /traces        — Recent traces
+"""
 
 import json
 import logging
@@ -7,11 +16,20 @@ import sys
 import uuid
 
 from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv(os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", ".env"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
+# Load env — try multiple paths
+for p in [
+    Path(__file__).resolve().parent.parent.parent.parent.parent / ".env",
+    Path(__file__).resolve().parent.parent.parent.parent / ".env",
+    Path(__file__).resolve().parent.parent.parent / ".env",
+]:
+    if p.exists():
+        load_dotenv(p)
+        break
 
-# Configure logging
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -19,237 +37,257 @@ logging.basicConfig(
 )
 logger = logging.getLogger("agent.api")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-
-from src.agent.core.graph import run_agent, build_graph
-from src.agent.core.state import AgentState, BudgetInfo
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage
 
-app = FastAPI(
-    title="Production Agentic System",
-    description="Plan-and-Execute agent with 5+ tools",
-    version="0.1.0",
+from src.agent.core.graph import build_graph
+from src.agent.core.state import AgentState, BudgetInfo
+from src.agent.core.guardrails import (
+    validate_input, apply_bedrock_guardrail, sanitize_output, check_grounding,
 )
+from src.agent.core.memory import maybe_summarize
+
+# ── FastAPI App ─────────────────────────────────────────────────────────
+
+app = FastAPI(title="LEC Agentic System", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-class QueryRequest(BaseModel):
-    query: str
-    budget_limit: float = Field(default=20.0, description="Max budget in USD")
-    thread_id: str = Field(default="", description="Session thread ID")
+BUDGET_CAP = float(os.environ.get("BUDGET_CAP_USD", "20.0"))
 
 
-class QueryResponse(BaseModel):
-    query: str
-    plan: dict | None = None
-    observations: list = []
-    final_answer: str | None = None
-    reflections: list = []
-    iterations: int = 0
-    budget: dict = {}
-    error: str | None = None
+# ── Shared async agent runner ──────────────────────────────────────────
 
+async def _run_agent_async(query: str, budget_usd: float, thread_id: str) -> dict:
+    """Run the agent asynchronously."""
+    graph = build_graph()
+    config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
+
+    initial_state: AgentState = {
+        "query": query,
+        "messages": [HumanMessage(content=query)],
+        "plan": None,
+        "observations": [],
+        "reflections": [],
+        "iteration": 0,
+        "budget": BudgetInfo(max_budget_usd=budget_usd),
+        "final_answer": None,
+        "error": None,
+    }
+
+    try:
+        existing = await graph.aget_state(config)
+        if existing and existing.values and existing.values.get("messages"):
+            await graph.aupdate_state(config, {
+                "query": query,
+                "messages": [HumanMessage(content=query)],
+                "plan": None,
+                "observations": [],
+                "reflections": [],
+                "iteration": 0,
+                "budget": BudgetInfo(max_budget_usd=budget_usd),
+                "final_answer": None,
+                "error": None,
+            })
+            result = await graph.ainvoke(None, config=config)
+        else:
+            result = await graph.ainvoke(initial_state, config=config)
+    except Exception as e:
+        logger.error(f"[AGENT] Error: {e}", exc_info=True)
+        result = {**initial_state, "error": str(e)}
+
+    # Save AI response + maybe summarize
+    final_answer = result.get("final_answer", "")
+    if final_answer and not result.get("error"):
+        try:
+            await graph.aupdate_state(config, {"messages": [AIMessage(content=final_answer)]})
+            current_state = await graph.aget_state(config)
+            if current_state and current_state.values.get("messages"):
+                summarized = maybe_summarize(current_state.values["messages"])
+                if len(summarized) != len(current_state.values["messages"]):
+                    await graph.aupdate_state(config, {"messages": summarized})
+        except Exception:
+            pass
+
+    # Build response
+    plan_output = None
+    if result.get("plan"):
+        plan_output = {
+            "thought": result["plan"].thought,
+            "steps": [
+                {"step_id": s.step_id, "tool": s.tool, "args": s.args,
+                 "depends_on": s.depends_on, "reason": s.reason}
+                for s in result["plan"].steps
+            ],
+        }
+
+    observations_output = [
+        {"step_id": o.step_id, "tool": o.tool, "success": o.success,
+         "result": o.result, "error": o.error}
+        for o in result.get("observations", [])
+    ]
+
+    raw_answer = result.get("final_answer", "Agent could not produce an answer.")
+    clean_answer = sanitize_output(raw_answer)
+    clean_answer = check_grounding(clean_answer, result.get("observations", []))
+
+    return {
+        "query": query,
+        "plan": plan_output,
+        "observations": observations_output,
+        "final_answer": clean_answer,
+        "reflections": result.get("reflections", []),
+        "iterations": result.get("iteration", 0),
+        "budget": result["budget"].model_dump() if hasattr(result.get("budget"), "model_dump") else {},
+        "error": result.get("error"),
+    }
+
+
+# ── Endpoints ───────────────────────────────────────────────────────────
 
 @app.get("/health")
-def health():
+@app.get("/ping")
+async def health():
     return {"status": "ok"}
 
 
 @app.get("/metrics")
-def get_metrics():
-    """Return aggregate metrics for monitoring."""
+async def metrics_endpoint():
     from src.agent.core.observability import metrics
     return metrics.get_summary()
 
 
 @app.get("/traces")
-def get_traces():
-    """Return recent request traces for debugging."""
+async def traces_endpoint():
     from src.agent.core.observability import metrics
     return {"traces": metrics.recent_traces}
 
 
-@app.post("/agent/query", response_model=QueryResponse)
-def agent_query(request: QueryRequest):
+@app.post("/invocations")
+async def invocations(request: Request):
+    """AgentCore-compatible invoke endpoint."""
+    payload = await request.json()
+    query = payload.get("query", payload.get("prompt", ""))
+    thread_id = payload.get("thread_id", payload.get("session_id", f"t-{uuid.uuid4().hex[:8]}"))
+    budget_usd = float(payload.get("budget_limit", BUDGET_CAP))
+
+    logger.info(f"[INVOKE] query='{query[:80]}' thread={thread_id}")
+
     try:
-        from src.agent.core.guardrails import validate_input, apply_bedrock_guardrail
-        query = validate_input(request.query)
-
-        # Check input with Bedrock guardrail
-        _, blocked = apply_bedrock_guardrail(query, "INPUT")
-        if blocked:
-            return QueryResponse(
-                query=query,
-                final_answer="Your request was blocked by our safety filters. Please rephrase your question.",
-            )
-
-        thread_id = request.thread_id or f"q-{uuid.uuid4().hex[:8]}"
-        result = run_agent(
-            query=request.query,
-            budget_usd=request.budget_limit,
-            thread_id=thread_id,
-        )
-        return QueryResponse(**result)
+        query = validate_input(query)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return JSONResponse({"result": str(e), "session_id": thread_id, "error": True})
 
+    _, blocked = apply_bedrock_guardrail(query, "INPUT")
+    if blocked:
+        return JSONResponse({"result": "Your request was blocked by our safety filters.", "session_id": thread_id, "blocked": True})
 
-def _sse_event(event_type: str, data: dict) -> str:
-    """Format a Server-Sent Event."""
-    return f"event: {event_type}\ndata: {json.dumps(data, default=str)}\n\n"
+    try:
+        result = await _run_agent_async(query=query, budget_usd=budget_usd, thread_id=thread_id)
+    except Exception as e:
+        logger.error(f"[INVOKE] Error: {e}", exc_info=True)
+        return JSONResponse({"result": f"Error: {str(e)}", "session_id": thread_id, "error": True})
+
+    final_answer = result.get("final_answer", "")
+    if final_answer:
+        checked, was_blocked = apply_bedrock_guardrail(final_answer, "OUTPUT")
+        if was_blocked:
+            final_answer = checked
+
+    response = {"result": final_answer or "I couldn't process your request.", "session_id": thread_id}
+    if result.get("plan"):
+        response["plan"] = result["plan"]
+    if result.get("budget"):
+        response["budget"] = result["budget"]
+    if result.get("observations"):
+        response["observations"] = result["observations"]
+
+    logger.info(f"[INVOKE] Complete, iterations={result.get('iterations', 0)}")
+    return JSONResponse(response)
 
 
 @app.post("/agent/stream")
-def agent_stream(request: QueryRequest):
-    """Stream agent execution step-by-step via Server-Sent Events.
+async def stream_endpoint(request: Request):
+    """SSE streaming endpoint for the frontend."""
+    body = await request.json()
+    query = body.get("query", "")
+    thread_id = body.get("thread_id", f"s-{uuid.uuid4().hex[:8]}")
+    budget_limit = float(body.get("budget_limit", BUDGET_CAP))
 
-    Events emitted:
-      - planning: agent's thought + planned steps
-      - executing: each tool call as it starts
-      - tool_result: each tool result as it completes
-      - reflecting: reflector's decision
-      - answer: final answer
-      - budget: token/cost summary
-      - error: if something goes wrong
-    """
-    thread_id = request.thread_id or f"s-{uuid.uuid4().hex[:8]}"
-
-    def generate():
+    async def generate():
         try:
-            # Check input with Bedrock guardrail
-            from src.agent.core.guardrails import apply_bedrock_guardrail
-            from src.agent.core.observability import Trace, Span, metrics as metrics_store
-
-            trace = Trace()
-            trace.start(request.query, thread_id)
-
-            _, blocked = apply_bedrock_guardrail(request.query, "INPUT")
+            _, blocked = apply_bedrock_guardrail(query, "INPUT")
             if blocked:
-                trace.end(error="Blocked by input guardrail")
-                metrics_store.record(trace)
-                yield _sse_event("answer", {"final_answer": "Your request was blocked by our safety filters. Please rephrase your question."})
-                yield _sse_event("done", {"status": "complete"})
+                yield f"event: answer\ndata: {json.dumps({'final_answer': 'Your request was blocked by our safety filters.'})}\n\n"
+                yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
                 return
 
             graph = build_graph()
             config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
 
-            # Load existing messages from checkpoint if this thread has history
             existing_messages = []
             try:
-                existing = graph.get_state(config)
+                existing = await graph.aget_state(config)
                 if existing and existing.values and existing.values.get("messages"):
                     existing_messages = list(existing.values["messages"])
-                    logger.info(f"[STREAM] Found {len(existing_messages)} existing messages for thread {thread_id}")
-            except Exception as e:
-                logger.warning(f"[STREAM] Could not load existing state: {e}")
+            except Exception:
+                pass
 
-            # Build state with accumulated messages
-            all_messages = existing_messages + [HumanMessage(content=request.query)]
+            all_messages = existing_messages + [HumanMessage(content=query)]
 
             initial_state: AgentState = {
-                "query": request.query,
+                "query": query,
                 "messages": all_messages,
                 "plan": None,
                 "observations": [],
                 "reflections": [],
                 "iteration": 0,
-                "budget": BudgetInfo(max_budget_usd=request.budget_limit),
+                "budget": BudgetInfo(max_budget_usd=budget_limit),
                 "final_answer": None,
                 "error": None,
             }
 
-            logger.info(f"[STREAM] Starting stream for query: {request.query[:100]}, thread: {thread_id}, messages: {len(all_messages)}")
-
             last_answer = None
-            for event in graph.stream(initial_state, config=config, stream_mode="updates"):
+            async for event in graph.astream(initial_state, config=config, stream_mode="updates"):
                 for node_name, state_update in event.items():
-                    span = Span(name=node_name).start()
-
                     if node_name == "planner" and state_update.get("plan"):
                         plan = state_update["plan"]
-                        span.end(metadata={"steps": len(plan.steps)})
-                        trace.add_span(span)
-                        yield _sse_event("planning", {
-                            "thought": plan.thought,
-                            "steps": [
-                                {
-                                    "step_id": s.step_id,
-                                    "tool": s.tool,
-                                    "args": s.args,
-                                    "depends_on": s.depends_on,
-                                    "reason": s.reason,
-                                }
-                                for s in plan.steps
-                            ],
-                        })
+                        yield f"event: planning\ndata: {json.dumps({'thought': plan.thought, 'steps': [{'step_id': s.step_id, 'tool': s.tool, 'args': s.args, 'depends_on': s.depends_on, 'reason': s.reason} for s in plan.steps]}, default=str)}\n\n"
 
                     elif node_name == "executor":
-                        observations = state_update.get("observations", [])
-                        tools = [o.tool for o in observations]
-                        span.end(metadata={"tools": tools})
-                        trace.add_span(span)
-                        trace.tools_called.extend(tools)
-                        for obs in observations:
-                            yield _sse_event("tool_result", {
-                                "step_id": obs.step_id,
-                                "tool": obs.tool,
-                                "success": obs.success,
-                                "result": obs.result,
-                                "error": obs.error,
-                            })
+                        for obs in state_update.get("observations", []):
+                            yield f"event: tool_result\ndata: {json.dumps({'step_id': obs.step_id, 'tool': obs.tool, 'success': obs.success, 'result': obs.result, 'error': obs.error}, default=str)}\n\n"
 
                     elif node_name == "reflector":
                         if state_update.get("final_answer"):
-                            answer = state_update["final_answer"]
-                            checked_answer, was_blocked = apply_bedrock_guardrail(answer, "OUTPUT")
-                            last_answer = checked_answer if not was_blocked else answer
-                            span.end(metadata={"is_done": True})
-                            trace.add_span(span)
-                            yield _sse_event("answer", {
-                                "final_answer": last_answer,
-                            })
-                        else:
-                            reflections = state_update.get("reflections", [])
-                            if reflections:
-                                yield _sse_event("reflecting", {
-                                    "feedback": reflections[-1] if reflections else "",
-                                })
+                            last_answer = state_update["final_answer"]
+                            yield f"event: answer\ndata: {json.dumps({'final_answer': last_answer})}\n\n"
+                        elif state_update.get("reflections"):
+                            yield f"event: reflecting\ndata: {json.dumps({'feedback': state_update['reflections'][-1]})}\n\n"
 
                         budget = state_update.get("budget")
                         if budget and hasattr(budget, "model_dump"):
-                            yield _sse_event("budget", budget.model_dump())
+                            yield f"event: budget\ndata: {json.dumps(budget.model_dump())}\n\n"
 
-            # Save AI message to checkpoint for conversation history
             if last_answer:
                 try:
-                    graph.update_state(config, {"messages": [AIMessage(content=last_answer)]})
+                    await graph.aupdate_state(config, {"messages": [AIMessage(content=last_answer)]})
                 except Exception:
                     pass
 
-            # Record trace
-            budget_data = None
-            # Get budget from last event if available
-            trace.end(budget=budget_data)
-            metrics_store.record(trace)
-
-            # Send trace info as final event
-            yield _sse_event("trace", {"request_id": trace.request_id, "duration_ms": trace.total_duration_ms})
-            yield _sse_event("done", {"status": "complete"})
+            yield f"event: done\ndata: {json.dumps({'status': 'complete'})}\n\n"
 
         except Exception as e:
-            trace.end(error=str(e))
-            metrics_store.record(trace)
-            yield _sse_event("error", {"message": str(e)})
+            logger.error(f"[STREAM] Error: {e}", exc_info=True)
+            yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -262,3 +300,6 @@ def agent_stream(request: QueryRequest):
     )
 
 
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8080)

@@ -1,23 +1,13 @@
-FROM --platform=linux/arm64 python:3.11-slim
+FROM --platform=linux/arm64 ghcr.io/astral-sh/uv:python3.11-bookworm-slim
 
-# LEC Agentic System Backend
 WORKDIR /app
 
-# Install uv
-RUN pip install uv
-
-# Copy dependency files
 COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-cache --no-dev
 
-# Install dependencies
-RUN uv sync --no-dev --frozen
-
-# Copy source code
 COPY src/ src/
 COPY config.yaml .
 
-# Expose port
-EXPOSE 8000
+EXPOSE 8080
 
-# Run the API server
-CMD ["uv", "run", "uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "4"]

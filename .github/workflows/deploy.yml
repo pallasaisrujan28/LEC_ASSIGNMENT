@@ -8,6 +8,9 @@ on:
 env:
   AWS_REGION: us-west-2
   ECR_REPO: lec-agent-backend
+  ECS_CLUSTER: lec-agent-cluster
+  ECS_SERVICE: lec-agent-backend
+  ECS_TASK_FAMILY: lec-agent-backend
   CLOUDFRONT_DIST_ID: ELEWWHZ0YPIZP
   S3_FRONTEND_BUCKET: lec-agent-frontend-866647877267
 
@@ -37,7 +40,7 @@ jobs:
       - run: terraform plan -out=tfplan
       - run: terraform apply -auto-approve tfplan
 
-  # ── Step 2: Backend — build + push to ECR ───────────────────────────
+  # ── Step 2: Backend — build, push to ECR, deploy to ECS Fargate ────
   backend:
     name: Deploy Backend
     needs: infra
@@ -76,36 +79,72 @@ jobs:
           IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest"
           docker buildx create --use --name arm64builder 2>/dev/null || true
           docker buildx build --platform linux/arm64 -t $IMAGE_URI --push .
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_OUTPUT
 
-      - name: Deploy to AgentCore Runtime
+      - name: Register new ECS task definition and update service
         if: steps.changes.outputs.changed == 'true'
         run: |
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
           IMAGE_URI="${ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPO}:latest"
 
-          # Check if runtime already exists
-          EXISTING=$(aws bedrock-agentcore-control list-agent-runtimes --region ${AWS_REGION} \
-            --query "agentRuntimes[?agentRuntimeName=='lec_agent_runtime'].agentRuntimeId" --output text 2>/dev/null || echo "")
+          # Register new task definition with all env vars from secrets
+          TASK_DEF=$(cat <<EOF
+          {
+            "family": "${ECS_TASK_FAMILY}",
+            "requiresCompatibilities": ["FARGATE"],
+            "networkMode": "awsvpc",
+            "cpu": "1024",
+            "memory": "2048",
+            "executionRoleArn": "${{ secrets.ECS_EXECUTION_ROLE_ARN }}",
+            "taskRoleArn": "${{ secrets.ECS_TASK_ROLE_ARN }}",
+            "runtimePlatform": {
+              "operatingSystemFamily": "LINUX",
+              "cpuArchitecture": "ARM64"
+            },
+            "containerDefinitions": [{
+              "name": "backend",
+              "image": "${IMAGE_URI}",
+              "essential": true,
+              "portMappings": [{"containerPort": 8080, "protocol": "tcp"}],
+              "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                  "awslogs-group": "/ecs/lec-agent",
+                  "awslogs-region": "${AWS_REGION}",
+                  "awslogs-stream-prefix": "backend"
+                }
+              },
+              "environment": [
+                {"name": "AWS_REGION", "value": "${AWS_REGION}"},
+                {"name": "BEDROCK_MODEL_ID", "value": "${{ secrets.BEDROCK_MODEL_ID }}"},
+                {"name": "AGENTCORE_MEMORY_ID", "value": "${{ secrets.AGENTCORE_MEMORY_ID }}"},
+                {"name": "AGENTCORE_SUMMARY_STRATEGY_ID", "value": "${{ secrets.AGENTCORE_SUMMARY_STRATEGY_ID }}"},
+                {"name": "BEDROCK_GUARDRAIL_ID", "value": "${{ secrets.BEDROCK_GUARDRAIL_ID }}"},
+                {"name": "BEDROCK_GUARDRAIL_VERSION", "value": "${{ secrets.BEDROCK_GUARDRAIL_VERSION }}"},
+                {"name": "TAVILY_API_KEY", "value": "${{ secrets.TAVILY_API_KEY }}"},
+                {"name": "BUDGET_CAP_USD", "value": "20.0"},
+                {"name": "LANGCHAIN_TRACING_V2", "value": "true"},
+                {"name": "LANGCHAIN_ENDPOINT", "value": "${{ secrets.LANGCHAIN_ENDPOINT }}"},
+                {"name": "LANGCHAIN_API_KEY", "value": "${{ secrets.LANGCHAIN_API_KEY }}"},
+                {"name": "LANGCHAIN_PROJECT", "value": "LEC-AGENT"}
+              ]
+            }]
+          }
+          EOF
+          )
 
-          if [ -z "$EXISTING" ]; then
-            echo "Creating new AgentCore Runtime..."
-            aws bedrock-agentcore-control create-agent-runtime \
-              --agent-runtime-name lec_agent_runtime \
-              --description "LEC Agentic System backend" \
-              --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"'"${IMAGE_URI}"'"}}' \
-              --role-arn ${{ secrets.AGENTCORE_ROLE_ARN }} \
-              --network-configuration '{"networkMode":"PUBLIC"}' \
-              --environment-variables '{"BEDROCK_MODEL_ID":"${{ secrets.BEDROCK_MODEL_ID }}","AWS_REGION":"us-west-2","AGENTCORE_MEMORY_ID":"${{ secrets.AGENTCORE_MEMORY_ID }}","AGENTCORE_SUMMARY_STRATEGY_ID":"${{ secrets.AGENTCORE_SUMMARY_STRATEGY_ID }}","BEDROCK_GUARDRAIL_ID":"${{ secrets.BEDROCK_GUARDRAIL_ID }}","BEDROCK_GUARDRAIL_VERSION":"${{ secrets.BEDROCK_GUARDRAIL_VERSION }}","TAVILY_API_KEY":"${{ secrets.TAVILY_API_KEY }}","BUDGET_CAP_USD":"20.0","LANGCHAIN_TRACING_V2":"true","LANGCHAIN_ENDPOINT":"${{ secrets.LANGCHAIN_ENDPOINT }}","LANGCHAIN_API_KEY":"${{ secrets.LANGCHAIN_API_KEY }}","LANGCHAIN_PROJECT":"LEC-AGENT"}' \
-              --region ${AWS_REGION}
-          else
-            echo "Updating existing AgentCore Runtime: $EXISTING"
-            aws bedrock-agentcore-control update-agent-runtime \
-              --agent-runtime-id "$EXISTING" \
-              --agent-runtime-artifact '{"containerConfiguration":{"containerUri":"'"${IMAGE_URI}"'"}}' \
-              --environment-variables '{"BEDROCK_MODEL_ID":"${{ secrets.BEDROCK_MODEL_ID }}","AWS_REGION":"us-west-2","AGENTCORE_MEMORY_ID":"${{ secrets.AGENTCORE_MEMORY_ID }}","AGENTCORE_SUMMARY_STRATEGY_ID":"${{ secrets.AGENTCORE_SUMMARY_STRATEGY_ID }}","BEDROCK_GUARDRAIL_ID":"${{ secrets.BEDROCK_GUARDRAIL_ID }}","BEDROCK_GUARDRAIL_VERSION":"${{ secrets.BEDROCK_GUARDRAIL_VERSION }}","TAVILY_API_KEY":"${{ secrets.TAVILY_API_KEY }}","BUDGET_CAP_USD":"20.0","LANGCHAIN_TRACING_V2":"true","LANGCHAIN_ENDPOINT":"${{ secrets.LANGCHAIN_ENDPOINT }}","LANGCHAIN_API_KEY":"${{ secrets.LANGCHAIN_API_KEY }}","LANGCHAIN_PROJECT":"LEC-AGENT"}' \
-              --region ${AWS_REGION}
-          fi
+          echo "$TASK_DEF" > task-def.json
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json file://task-def.json --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Registered: $NEW_ARN"
+
+          # Update the ECS service to use the new task definition
+          aws ecs update-service \
+            --cluster ${ECS_CLUSTER} \
+            --service ${ECS_SERVICE} \
+            --task-definition "$NEW_ARN" \
+            --force-new-deployment \
+            --query 'service.serviceName' --output text
+
+          echo "Service updated, deployment in progress"
 
   # ── Step 3: Frontend — build + deploy to S3 + CloudFront ──────────────
   frontend:
@@ -136,6 +175,8 @@ jobs:
 
       - name: Build frontend
         if: steps.changes.outputs.changed == 'true'
+        env:
+          NEXT_PUBLIC_API_URL: ${{ secrets.BACKEND_URL }}
         run: |
           npm ci
           npm run build

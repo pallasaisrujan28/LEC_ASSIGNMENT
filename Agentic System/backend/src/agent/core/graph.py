@@ -39,7 +39,7 @@ def _should_continue(state: AgentState) -> str:
     return "replan"
 
 
-def build_graph():
+def build_graph(checkpointer=None):
     """Build and compile the Plan-and-Execute agent graph."""
     graph = StateGraph(AgentState)
 
@@ -64,7 +64,8 @@ def build_graph():
     )
 
     # Compile with checkpointer
-    checkpointer = get_checkpointer()
+    if checkpointer is None:
+        checkpointer = get_checkpointer()
     return graph.compile(checkpointer=checkpointer)
 
 

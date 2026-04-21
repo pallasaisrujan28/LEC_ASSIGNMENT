@@ -114,7 +114,7 @@ async def _execute_plan_async(steps, tools) -> list[Observation]:
     return all_observations
 
 
-def executor_node(state: AgentState) -> dict:
+async def executor_node(state: AgentState) -> dict:
     """Execute the current plan's steps."""
     from src.tools import get_all_tools
 
@@ -125,7 +125,7 @@ def executor_node(state: AgentState) -> dict:
 
     logger.info(f"[EXECUTOR] Executing plan with {len(plan.steps)} steps")
     tools = get_all_tools()
-    observations = asyncio.run(_execute_plan_async(plan.steps, tools))
+    observations = await _execute_plan_async(plan.steps, tools)
 
     # Append to existing observations
     existing = list(state.get("observations", []))
