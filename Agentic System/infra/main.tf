@@ -105,22 +105,14 @@ resource "aws_bedrock_guardrail" "agent_guardrail" {
     }
   }
 
-  # 5. Grounding check — verify response is grounded, not hallucinated
-  contextual_grounding_policy_config {
-    filters_config {
-      type      = "GROUNDING"
-      threshold = 0.7
-    }
-    filters_config {
-      type      = "RELEVANCE"
-      threshold = 0.7
-    }
-  }
+  # 5. Grounding check — handled at code level in guardrails.py
+  # Removed from Bedrock guardrail because it conflicts with structured output
+  # (planner/reflector use with_structured_output which has no grounding source)
 }
 
 resource "aws_bedrock_guardrail_version" "v1" {
   guardrail_arn = aws_bedrock_guardrail.agent_guardrail.guardrail_arn
-  description   = "v1"
+  description   = "v2 - removed grounding check"
 }
 
 output "guardrail_id" {

@@ -125,3 +125,52 @@ def check_grounding(answer: str, observations: list) -> str:
         logger.warning("[GUARDRAIL] Answer may not be grounded in tool results")
 
     return answer
+
+
+# ── Bedrock Guardrail (API-level, not on LLM calls) ────────────────────
+
+def apply_bedrock_guardrail(text: str, source: str = "INPUT") -> tuple[str, bool]:
+    """Apply Bedrock guardrail to text at the API level.
+
+    Uses the ApplyGuardrail API directly instead of embedding in LLM calls.
+    This avoids conflicts with with_structured_output.
+
+    Args:
+        text: The text to check
+        source: "INPUT" for user queries, "OUTPUT" for agent responses
+
+    Returns:
+        (text, blocked) — the text (possibly modified) and whether it was blocked
+    """
+    import os
+    import boto3
+
+    guardrail_id = os.environ.get("BEDROCK_GUARDRAIL_ID")
+    guardrail_version = os.environ.get("BEDROCK_GUARDRAIL_VERSION")
+    region = os.environ.get("AWS_REGION", "us-west-2")
+
+    if not guardrail_id or not guardrail_version:
+        return text, False
+
+    try:
+        client = boto3.client("bedrock-runtime", region_name=region)
+        response = client.apply_guardrail(
+            guardrailIdentifier=guardrail_id,
+            guardrailVersion=guardrail_version,
+            source=source,
+            content=[{"text": {"text": text}}],
+        )
+
+        action = response.get("action", "NONE")
+        if action == "GUARDRAIL_INTERVENED":
+            logger.warning(f"[BEDROCK GUARDRAIL] Blocked ({source}): {text[:100]}")
+            # Get the guardrail's replacement message
+            outputs = response.get("outputs", [])
+            blocked_msg = outputs[0]["text"] if outputs else "Request blocked by safety filters."
+            return blocked_msg, True
+
+        return text, False
+
+    except Exception as e:
+        logger.error(f"[BEDROCK GUARDRAIL] Error applying guardrail: {e}")
+        return text, False

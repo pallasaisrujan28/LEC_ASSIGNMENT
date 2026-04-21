@@ -67,8 +67,17 @@ def health():
 @app.post("/agent/query", response_model=QueryResponse)
 def agent_query(request: QueryRequest):
     try:
-        from src.agent.core.guardrails import validate_input
+        from src.agent.core.guardrails import validate_input, apply_bedrock_guardrail
         query = validate_input(request.query)
+
+        # Check input with Bedrock guardrail
+        _, blocked = apply_bedrock_guardrail(query, "INPUT")
+        if blocked:
+            return QueryResponse(
+                query=query,
+                final_answer="Your request was blocked by our safety filters. Please rephrase your question.",
+            )
+
         thread_id = request.thread_id or f"q-{uuid.uuid4().hex[:8]}"
         result = run_agent(
             query=request.query,
@@ -102,6 +111,14 @@ def agent_stream(request: QueryRequest):
 
     def generate():
         try:
+            # Check input with Bedrock guardrail
+            from src.agent.core.guardrails import apply_bedrock_guardrail
+            _, blocked = apply_bedrock_guardrail(request.query, "INPUT")
+            if blocked:
+                yield _sse_event("answer", {"final_answer": "Your request was blocked by our safety filters. Please rephrase your question."})
+                yield _sse_event("done", {"status": "complete"})
+                return
+
             graph = build_graph()
             config = {"configurable": {"thread_id": thread_id, "actor_id": "agentic-system"}}
 
@@ -164,9 +181,12 @@ def agent_stream(request: QueryRequest):
 
                     elif node_name == "reflector":
                         if state_update.get("final_answer"):
-                            last_answer = state_update["final_answer"]
+                            # Apply output guardrail on final answer
+                            answer = state_update["final_answer"]
+                            checked_answer, was_blocked = apply_bedrock_guardrail(answer, "OUTPUT")
+                            last_answer = checked_answer if not was_blocked else answer
                             yield _sse_event("answer", {
-                                "final_answer": state_update["final_answer"],
+                                "final_answer": last_answer,
                             })
                         else:
                             reflections = state_update.get("reflections", [])

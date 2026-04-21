@@ -63,23 +63,13 @@ Only include steps that still need to be done. Do NOT repeat completed steps.
 
 
 def _get_llm():
-    """Get the Bedrock LLM with guardrails."""
+    """Get the Bedrock LLM for planning (no guardrails — internal step)."""
     import os
 
-    guardrail_id = os.environ.get("BEDROCK_GUARDRAIL_ID")
-    guardrail_version = os.environ.get("BEDROCK_GUARDRAIL_VERSION")
-
-    kwargs = {
-        "model": os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
-        "region_name": os.environ.get("AWS_REGION", "us-west-2"),
-    }
-    if guardrail_id and guardrail_version:
-        kwargs["guardrail_config"] = {
-            "guardrailIdentifier": guardrail_id,
-            "guardrailVersion": guardrail_version,
-        }
-
-    return ChatBedrockConverse(**kwargs)
+    return ChatBedrockConverse(
+        model=os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-sonnet-4-6"),
+        region_name=os.environ.get("AWS_REGION", "us-west-2"),
+    )
 
 
 def planner_node(state: AgentState) -> dict:
@@ -124,9 +114,10 @@ def planner_node(state: AgentState) -> dict:
     structured_llm = llm.with_structured_output(Plan)
     plan = structured_llm.invoke(messages)
 
-    # Handle guardrail block — structured output returns None when blocked
+    # Handle None — structured output parsing failed
     if plan is None:
-        plan = Plan(thought="Request was blocked by safety guardrails.", steps=[])
+        logger.warning("[PLANNER] Structured output returned None — retrying")
+        plan = Plan(thought="Could not parse a plan. Will answer directly.", steps=[])
 
     # Tool abuse prevention guardrail
     from src.agent.core.guardrails import validate_plan
