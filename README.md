@@ -1,6 +1,6 @@
 # Production Agentic System
 
-A production grade AI agent that orchestrates 5 tools to answer multi step queries using a Plan and Execute architecture on LangGraph, deployed on AWS ECS Fargate with auto scaling.
+A production grade AI agent that orchestrates 6 tools to answer multi step queries using a Plan and Execute architecture on LangGraph, deployed on AWS ECS Fargate with auto scaling.
 
 ## Live URL
 
@@ -86,4 +86,4 @@ Try these in the chat interface:
 
 ## Documentation
 
-See Agentic System/docs/technical-documentation.md for the full technical writeup covering architecture, tools, guardrails, evaluation, prompt ablation, scaling, and AI usage.
+See [Agentic System/docs/technical-documentation.md](Agentic%20System/docs/technical-documentation.md) for the full technical writeup covering architecture, tools, guardrails, evaluation, prompt ablation, scaling, and AI usage.

@@ -27,8 +27,6 @@ I have built 5 tool functions (covering the 5 required categories) using the Lan
 
 ## Agent Orchestration System
 
-### Architecture
-
 I have implemented a Plan and Execute architecture using LangGraph ([LangGraph docs](https://langchain-ai.github.io/langgraph/)). The graph has three nodes wired in a cycle:
 
 **Planner** receives the user query and conversation history, then produces a structured JSON plan using `with_structured_output`. Each plan contains a thought (reasoning), and a list of steps where each step specifies a tool name, arguments, and dependency declarations. The planner uses the v2 improved prompt loaded from `src/prompts/v2_improved.txt`.
@@ -71,7 +69,7 @@ I have implemented two layers of guardrails:
 
 I have built a custom observability module with Trace, Span, and MetricsStore classes. Each agent run gets a unique trace with spans for planner, executor, and reflector nodes. The MetricsStore collects aggregate statistics (total requests, error rate, total tokens, total cost, average duration, tool call counts) and exposes them via a `/metrics` endpoint. The last 50 traces are available via `/traces`. All nodes emit structured log messages with timing and status information.
 
-LangSmith tracing is enabled for production monitoring. All LLM calls, tool executions, and graph transitions are traced to LangSmith EU endpoint. The project is configured as `LEC-AGENT` with tracing enabled via `LANGCHAIN_TRACING_V2=true`.
+LangSmith tracing is enabled for monitoring. All LLM calls, tool executions, and graph transitions are traced to LangSmith EU endpoint.
 
 ## Evaluation
 
