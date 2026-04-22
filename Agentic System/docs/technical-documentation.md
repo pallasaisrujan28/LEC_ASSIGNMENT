@@ -27,6 +27,14 @@ I have built 5 tool functions (covering the 5 required categories) using the Lan
 
 ## Agent Orchestration System
 
+### Alternatives Considered
+
+Before settling on Plan and Execute, I evaluated the ReAct (Reason + Act) pattern using LangGraph's `create_react_agent`. ReAct works by looping through think, act, observe cycles where the LLM decides one tool call at a time based on the previous observation. I prototyped this and ran into several issues. First, it made one LLM call per tool invocation with no upfront plan, so for a query like "What is the population of France and the UK, and what is the difference?" the agent would call wiki_summary for France, wait for the result, then call wiki_summary for the UK, wait again, then call calculator. Each step required a full LLM round trip to decide the next action. With Plan and Execute, the planner identifies all three steps upfront and the two wiki_summary calls run in parallel since they have no dependencies. Second, ReAct did not produce a visible plan before execution, which was a requirement. The user needs to see what the agent intends to do before it does it. Third, ReAct's sequential nature meant higher token costs because the full conversation history including all previous observations was sent to the LLM on every iteration, whereas Plan and Execute only calls the LLM twice per cycle (planner and reflector) regardless of how many tools are executed.
+
+I chose Plan and Execute because it gives an explicit plan before execution (visible in the API response and streamed to the frontend), supports parallel tool calls via the dependency graph, and keeps LLM costs lower by batching tool execution between planning and reflection steps.
+
+### Architecture
+
 I have implemented a Plan and Execute architecture using LangGraph ([LangGraph docs](https://langchain-ai.github.io/langgraph/)). The graph has three nodes wired in a cycle:
 
 **Planner** receives the user query and conversation history, then produces a structured JSON plan using `with_structured_output`. Each plan contains a thought (reasoning), and a list of steps where each step specifies a tool name, arguments, and dependency declarations. The planner uses the v2 improved prompt loaded from `src/prompts/v2_improved.txt`.
