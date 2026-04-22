@@ -117,6 +117,7 @@ export default function ChatInterface() {
   return (
     <div className="flex h-screen overflow-hidden bg-[#1a1a18]">
       <Sidebar turnCount={turns.length} onNewConversation={newConversation} />
+      <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ''; }} />
 
       <div className="flex flex-1 flex-col overflow-hidden">
         {!hasMessages ? (
@@ -136,7 +137,6 @@ export default function ChatInterface() {
                 )}
                 <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={handleKeyDown} placeholder="How can I help you today?" rows={2} className="w-full resize-none bg-transparent px-5 py-4 pr-24 text-[15px] text-[#e8e4dc] placeholder-[#5a5548] outline-none" />
                 <div className="absolute bottom-3 right-3 flex items-center gap-2">
-                  <input ref={fileInputRef} type="file" accept=".pdf" className="hidden" onChange={(e) => { if (e.target.files?.[0]) handleFileUpload(e.target.files[0]); e.target.value = ''; }} />
                   <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploading} className="flex h-9 w-9 items-center justify-center rounded-lg text-[#5a5548] transition-all hover:bg-white/[0.05] hover:text-[#e8e4dc] disabled:opacity-30" title="Upload PDF (max 500KB)">
                     <Paperclip size={16} />
                   </button>
